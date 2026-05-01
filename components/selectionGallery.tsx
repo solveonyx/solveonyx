@@ -252,10 +252,10 @@ export function SelectionGallery<TItem extends GalleryItem>({
 
     if (items.length === 0 && !canAdd) {
         return (
-            <div className="space-y-2">
+            <div className="flex h-full min-h-0 flex-col gap-2">
                 <div
                     className={cn(
-                        "h-[calc(100vh-14rem)] w-full max-w-60 rounded-lg bg-muted/30 p-3 text-sm text-muted-foreground",
+                        "flex min-h-0 flex-1 w-full rounded-lg bg-muted/30 p-3 text-sm text-muted-foreground",
                         className
                     )}
                 >
@@ -267,9 +267,9 @@ export function SelectionGallery<TItem extends GalleryItem>({
     }
 
     return (
-        <div className="space-y-2">
+        <div className="flex h-full min-h-0 flex-col gap-2">
             <div
-                className={cn("flex h-[calc(100vh-14rem)] w-full max-w-60 flex-col overflow-visible", className)}
+                className={cn("flex min-h-0 flex-1 w-full flex-col overflow-visible", className)}
             >
                 <div
                     ref={canReorder ? sortable.setContainerElement : undefined}

@@ -1,10 +1,11 @@
 "use client"
 
-import { FocusEvent, MouseEvent, useEffect, useRef, useState } from "react"
+import { useState } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { usePathname } from "next/navigation"
 import { useAppShellLock } from "@/components/app-shell-lock-provider"
+import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { appNavItems } from "@/lib/app-nav"
 import { cn } from "@/lib/utils"
@@ -14,103 +15,32 @@ export function AppSidebar() {
     const pathname = usePathname()
     const { isNavigationLocked } = useAppShellLock()
     const [isExpanded, setIsExpanded] = useState(false)
-    const isExpandedRef = useRef(false)
-    const expandTimeoutRef = useRef<number | null>(null)
     const sidebarIsExpanded = isExpanded && !isNavigationLocked
 
-    const setExpanded = (nextIsExpanded: boolean) => {
-        isExpandedRef.current = nextIsExpanded
-        setIsExpanded(nextIsExpanded)
-    }
-
-    const clearExpandTimeout = () => {
-        if (expandTimeoutRef.current === null) {
-            return
-        }
-
-        window.clearTimeout(expandTimeoutRef.current)
-        expandTimeoutRef.current = null
-    }
-
-    const handleMouseEnter = () => {
+    const toggleExpanded = () => {
         if (isNavigationLocked) {
             return
         }
 
-        clearExpandTimeout()
-        expandTimeoutRef.current = window.setTimeout(() => {
-            setExpanded(true)
-            expandTimeoutRef.current = null
-        }, 500)
+        setIsExpanded((current) => !current)
     }
 
     const handleMouseLeave = () => {
-        clearExpandTimeout()
-        setExpanded(false)
+        if (isNavigationLocked || !sidebarIsExpanded) {
+            return
+        }
+
+        setIsExpanded(false)
     }
-
-    const handleFocus = () => {
-        if (isNavigationLocked) {
-            return
-        }
-
-        clearExpandTimeout()
-        setExpanded(true)
-    }
-
-    const handleBlur = (event: FocusEvent<HTMLElement>) => {
-        if (event.currentTarget.contains(event.relatedTarget)) {
-            return
-        }
-
-        setExpanded(false)
-    }
-
-    const handleNavMouseDown = (event: MouseEvent<HTMLAnchorElement>) => {
-        if (isNavigationLocked) {
-            event.preventDefault()
-            return
-        }
-
-        if (sidebarIsExpanded) {
-            return
-        }
-
-        event.preventDefault()
-    }
-
-    const handleNavClick = (event: MouseEvent<HTMLAnchorElement>) => {
-        if (isNavigationLocked) {
-            event.preventDefault()
-            return
-        }
-
-        if (sidebarIsExpanded) {
-            return
-        }
-
-        event.preventDefault()
-    }
-
-    useEffect(() => {
-        return clearExpandTimeout
-    }, [])
-
-    useEffect(() => {
-        if (!isNavigationLocked) {
-            return
-        }
-
-        clearExpandTimeout()
-    }, [isNavigationLocked])
 
     return (
         <>
             <div
                 className={cn(
-                    `pointer-events-none fixed inset-0 z-20 bg-black/20 opacity-0 transition-opacity ${sidebarTransitionClass}`,
-                    sidebarIsExpanded && "opacity-100"
+                    `fixed inset-0 z-20 bg-black/20 opacity-0 transition-opacity ${sidebarTransitionClass}`,
+                    sidebarIsExpanded ? "pointer-events-auto opacity-100" : "pointer-events-none"
                 )}
+                onClick={() => setIsExpanded(false)}
             />
             <aside
                 className={cn(
@@ -118,14 +48,18 @@ export function AppSidebar() {
                     sidebarIsExpanded ? "w-64" : "w-[4.5rem]",
                     isNavigationLocked && "select-none"
                 )}
-                onMouseEnter={handleMouseEnter}
                 onMouseLeave={handleMouseLeave}
-                onFocus={handleFocus}
-                onBlur={handleBlur}
             >
                 <div className="mb-4 space-y-3">
-                    <div className="flex h-10 items-center rounded-lg px-2">
-                        <div className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg">
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        className="flex h-10 w-full items-center justify-start rounded-lg px-2 hover:bg-transparent focus-visible:bg-transparent active:!translate-y-0"
+                        onClick={toggleExpanded}
+                        disabled={isNavigationLocked}
+                        aria-label={sidebarIsExpanded ? "Collapse navigation" : "Expand navigation"}
+                    >
+                        <div className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg transition-transform group-active/button:translate-y-px">
                             <Image
                                 src="/assets/logos/solveonyx_cube.png"
                                 alt="SolveOnyx"
@@ -141,10 +75,16 @@ export function AppSidebar() {
                                 sidebarIsExpanded && "opacity-100"
                             )}
                         >
-                            <div className="truncate text-base font-semibold tracking-tight">SolveOnyx CX</div>
-                            <div className="truncate text-xs text-muted-foreground">Admin workspace</div>
+                            <Image
+                                src="/assets/logos/solveonyx_logo_text.png"
+                                alt="SolveOnyx"
+                                width={152}
+                                height={24}
+                                className="h-6 w-auto object-contain"
+                                priority
+                            />
                         </div>
-                    </div>
+                    </Button>
                     <Separator />
                 </div>
 
@@ -167,8 +107,7 @@ export function AppSidebar() {
                                     isNavigationLocked && "pointer-events-none opacity-50"
                                 )}
                                 title={item.label}
-                                onMouseDown={handleNavMouseDown}
-                                onClick={handleNavClick}
+                                onClick={() => setIsExpanded(false)}
                             >
                                 <span className="flex size-8 shrink-0 items-center justify-center">
                                     <Icon className="size-4" aria-hidden="true" />

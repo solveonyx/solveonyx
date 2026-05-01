@@ -6,7 +6,6 @@ import { DualColumnMultiLevelListEditor } from "@/components/dualColumnMultiLeve
 import { PillList } from "@/components/pillList"
 import { Popup } from "@/components/popup"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { popupDefinitions } from "@/lib/popupDefinitions"
 import { fetchConfigHierarchy } from "@/services/configurableHierarchyService"
@@ -1020,7 +1019,7 @@ export default function ConfigurationManagementPage() {
     }, [activeEditorKey, setNavigationLocked])
 
     return (
-        <div className="mx-auto flex h-screen w-full max-w-5xl flex-col gap-5 overflow-hidden p-6">
+        <div className="flex h-screen w-full flex-col gap-5 overflow-hidden p-6">
             <div className="shrink-0">
                 <h1 className="text-2xl font-semibold tracking-tight">Configuration Management</h1>
                 <p className="mt-1 text-sm text-muted-foreground">
@@ -1028,104 +1027,99 @@ export default function ConfigurationManagementPage() {
                 </p>
             </div>
 
-            <Card className="flex min-h-0 flex-1 flex-col">
-                <CardHeader>
-                    <CardTitle>Configs and Options</CardTitle>
-                    <CardDescription>Assign each config to a type and maintain its available options.</CardDescription>
-                </CardHeader>
-                <CardContent className="min-h-0 flex-1 overflow-y-auto">
-                    {isLoading ? (
-                        <div className="space-y-3">
-                            <Skeleton className="h-16 w-full" />
-                            <Skeleton className="h-16 w-full" />
-                            <Skeleton className="h-8 w-32" />
-                        </div>
-                    ) : (
-                        <DualColumnMultiLevelListEditor
-                            items={configLines}
-                            secondaryColumn={{
-                                label: "Config Type",
-                                inputType: "select",
-                                getValue: (parent) => parent.configTypeId,
-                                getDisplayValue: (parent) => parent.configTypeName,
-                                options: configTypeOptions,
-                                onSave: saveConfigType
-                            }}
-                            onSaveParent={saveConfigName}
-                            onCreateParent={createConfigItem}
-                            onCreateChild={createOptionForConfig}
-                            onSaveChild={saveConfigOptionName}
-                            onReorderParents={reorderConfigs}
-                            onReorderChildren={reorderOptionsForConfig}
-                            canExpandParent={isSingleSelectConfig}
-                            showParentSupplement
-                            parentSupplementLabel="Assigned Products"
-                            childSectionLabel="Options"
-                            childRowSupplementLabel="Attached Models"
-                            renderChildRowSupplement={(parent, child) => {
-                                const modelGroups = getAssignedModelGroupsForConfig(parent.id)
+            <div className="min-h-0 flex-1">
+                {isLoading ? (
+                    <div className="space-y-3">
+                        <Skeleton className="h-16 w-full" />
+                        <Skeleton className="h-16 w-full" />
+                        <Skeleton className="h-8 w-32" />
+                    </div>
+                ) : (
+                    <DualColumnMultiLevelListEditor
+                        items={configLines}
+                        secondaryColumn={{
+                            label: "Config Type",
+                            inputType: "select",
+                            getValue: (parent) => parent.configTypeId,
+                            getDisplayValue: (parent) => parent.configTypeName,
+                            options: configTypeOptions,
+                            onSave: saveConfigType
+                        }}
+                        onSaveParent={saveConfigName}
+                        onCreateParent={createConfigItem}
+                        onCreateChild={createOptionForConfig}
+                        onSaveChild={saveConfigOptionName}
+                        onReorderParents={reorderConfigs}
+                        onReorderChildren={reorderOptionsForConfig}
+                        canExpandParent={isSingleSelectConfig}
+                        showParentSupplement
+                        parentSupplementLabel="Assigned Products"
+                        childSectionLabel="Options"
+                        childRowSupplementLabel="Attached Models"
+                        renderChildRowSupplement={(parent, child) => {
+                            const modelGroups = getAssignedModelGroupsForConfig(parent.id)
 
-                                return (
-                                    modelGroups.length > 0 ? (
-                                        <div className="space-y-2">
-                                            <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                                                Assigned Models
-                                            </p>
-                                            {modelGroups.map(({ productLine, models }, index) => (
-                                                <div
-                                                    key={productLine.id}
-                                                    className={index === 0 ? undefined : "pt-2"}
-                                                >
-                                                    <PillList
-                                                        items={models}
-                                                        selectedIds={assignedModelIdsByConfigOptionId[child.id] ?? []}
-                                                        getItemLabel={(model) => model.name}
-                                                        onToggle={(model, isSelected) => {
-                                                            void handleAssignedModelOptionToggle(child.id, model, isSelected)
-                                                        }}
-                                                        disabled={activeEditorKey !== null}
-                                                        emptyMessage="No models available."
-                                                    />
-                                                </div>
-                                            ))}
-                                        </div>
-                                    ) : (
-                                        <PillList
-                                            items={[]}
-                                            emptyMessage="No models available."
-                                        />
-                                    )
+                            return (
+                                modelGroups.length > 0 ? (
+                                    <div className="space-y-2">
+                                        <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                                            Assigned Models
+                                        </p>
+                                        {modelGroups.map(({ productLine, models }, index) => (
+                                            <div
+                                                key={productLine.id}
+                                                className={index === 0 ? undefined : "pt-2"}
+                                            >
+                                                <PillList
+                                                    items={models}
+                                                    selectedIds={assignedModelIdsByConfigOptionId[child.id] ?? []}
+                                                    getItemLabel={(model) => model.name}
+                                                    onToggle={(model, isSelected) => {
+                                                        void handleAssignedModelOptionToggle(child.id, model, isSelected)
+                                                    }}
+                                                    disabled={activeEditorKey !== null}
+                                                    emptyMessage="No models available."
+                                                />
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <PillList
+                                        items={[]}
+                                        emptyMessage="No models available."
+                                    />
                                 )
-                            }}
-                            renderParentSupplement={(parent) => (
-                                <AssignedProductsEditor
-                                    configId={parent.id}
-                                    products={products}
-                                    productLinesByProductId={productLinesByProductId}
-                                    modelsByProductLineId={modelsByProductLineId}
-                                    loadingProductLineIds={loadingProductLineIds}
-                                    loadingModelProductLineIds={loadingModelProductLineIds}
-                                    loadProductLines={loadProductLines}
-                                    loadModels={loadModels}
-                                    selectedProductIds={assignedProductIdsByConfigId[parent.id] ?? []}
-                                    onToggleProduct={handleAssignedProductToggle}
-                                    selectedProductLineIds={assignedProductLineIdsByConfigId[parent.id] ?? []}
-                                    onToggleProductLine={handleAssignedProductLineToggle}
-                                    selectedModelIds={assignedModelIdsByConfigId[parent.id] ?? []}
-                                    onToggleModel={handleAssignedModelToggle}
-                                    interactionLocked={activeEditorKey !== null}
-                                    isPersisting={persistingConfigIds.includes(parent.id)}
-                                />
-                            )}
-                            onActiveStateChange={handleConfigEditorActiveStateChange}
-                            interactionLocked={configEditorInteractionLocked}
-                            addParentLabel="Add Config"
-                            addChildLabel="Add Option"
-                            emptyMessage="No configs found."
-                        />
-                    )}
-                </CardContent>
-            </Card>
+                            )
+                        }}
+                        renderParentSupplement={(parent) => (
+                            <AssignedProductsEditor
+                                configId={parent.id}
+                                products={products}
+                                productLinesByProductId={productLinesByProductId}
+                                modelsByProductLineId={modelsByProductLineId}
+                                loadingProductLineIds={loadingProductLineIds}
+                                loadingModelProductLineIds={loadingModelProductLineIds}
+                                loadProductLines={loadProductLines}
+                                loadModels={loadModels}
+                                selectedProductIds={assignedProductIdsByConfigId[parent.id] ?? []}
+                                onToggleProduct={handleAssignedProductToggle}
+                                selectedProductLineIds={assignedProductLineIdsByConfigId[parent.id] ?? []}
+                                onToggleProductLine={handleAssignedProductLineToggle}
+                                selectedModelIds={assignedModelIdsByConfigId[parent.id] ?? []}
+                                onToggleModel={handleAssignedModelToggle}
+                                interactionLocked={activeEditorKey !== null}
+                                isPersisting={persistingConfigIds.includes(parent.id)}
+                            />
+                        )}
+                        onActiveStateChange={handleConfigEditorActiveStateChange}
+                        interactionLocked={configEditorInteractionLocked}
+                        addParentLabel="Add Configurable"
+                        addChildLabel="Add Option"
+                        pinAddParentToBottom
+                        emptyMessage="No configs found."
+                    />
+                )}
+            </div>
 
             {errorMessage && (
                 <Alert variant="destructive" className="shrink-0">

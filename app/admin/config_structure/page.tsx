@@ -20,7 +20,7 @@ export default async function ConfigurationHierarchyPage() {
     ])
 
     return (
-        <div className="mx-auto max-w-4xl space-y-5 p-6">
+        <div className="w-full space-y-5 p-6">
             {hierarchy.length === 0 && (
                 <Alert>
                     <AlertTitle>No configs found</AlertTitle>

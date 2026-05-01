@@ -1,12 +1,22 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useAppShellLock } from "@/components/app-shell-lock-provider"
 import { MultiLevelListEditor } from "@/components/multiLevelListEditor"
+import { PillList } from "@/components/pillList"
 import { SelectionGallery } from "@/components/selectionGallery"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { fetchConfigHierarchy } from "@/services/configurableHierarchyService"
+import {
+    createMapProdConfig,
+    createMapProdLineConfig,
+    deleteMapProdConfig,
+    deleteMapProdLineConfig,
+    fetchMapProdConfigs,
+    fetchMapProdLineConfigs
+} from "@/services/mapProdConfig"
 import { fetchProductHierarchy } from "@/services/productHierarchyService"
 import {
     createProduct,
@@ -17,7 +27,7 @@ import {
     updateModel,
     updateProductLine
 } from "@/services/productService"
-import { HierarchyEditorChild, HierarchyEditorParent, Product } from "@/types"
+import { ConfigWithOptions, HierarchyEditorChild, HierarchyEditorParent, Product } from "@/types"
 import { ProductLineWithModels } from "@/types/productHierarchy"
 
 type ProductMgmtChild = HierarchyEditorChild & {
@@ -49,6 +59,15 @@ export default function ProductManagementPage() {
     const [products, setProducts] = useState<Product[]>([])
     const [selectedProductId, setSelectedProductId] = useState("")
     const [productLines, setProductLines] = useState<ProductMgmtParent[]>([])
+    const [configs, setConfigs] = useState<ConfigWithOptions[]>([])
+    const [assignedConfigIdsByProductId, setAssignedConfigIdsByProductId] = useState<
+        Record<string, string[]>
+    >({})
+    const [assignedConfigIdsByProductLineId, setAssignedConfigIdsByProductLineId] = useState<
+        Record<string, string[]>
+    >({})
+    const [isPersistingSelectedProduct, setIsPersistingSelectedProduct] = useState(false)
+    const [persistingProductLineIds, setPersistingProductLineIds] = useState<string[]>([])
     const [isLoadingProducts, setIsLoadingProducts] = useState(true)
     const [isLoadingHierarchy, setIsLoadingHierarchy] = useState(false)
     const [activeEditorKey, setActiveEditorKey] = useState<string | null>(null)
@@ -75,6 +94,44 @@ export default function ProductManagementPage() {
     }, [])
 
     useEffect(() => {
+        const loadConfigs = async () => {
+            try {
+                const [configHierarchy, prodConfigMappings, prodLineConfigMappings] = await Promise.all([
+                    fetchConfigHierarchy(),
+                    fetchMapProdConfigs(),
+                    fetchMapProdLineConfigs()
+                ])
+
+                const nextAssignedConfigIdsByProductId = prodConfigMappings.reduce<Record<string, string[]>>(
+                    (accumulator, mapping) => {
+                        const currentConfigIds = accumulator[mapping.prodId] ?? []
+                        accumulator[mapping.prodId] = [...currentConfigIds, mapping.configId]
+                        return accumulator
+                    },
+                    {}
+                )
+                const nextAssignedConfigIdsByProductLineId = prodLineConfigMappings.reduce<Record<string, string[]>>(
+                    (accumulator, mapping) => {
+                        const currentConfigIds = accumulator[mapping.prodLineId] ?? []
+                        accumulator[mapping.prodLineId] = [...currentConfigIds, mapping.configId]
+                        return accumulator
+                    },
+                    {}
+                )
+
+                setConfigs(configHierarchy)
+                setAssignedConfigIdsByProductId(nextAssignedConfigIdsByProductId)
+                setAssignedConfigIdsByProductLineId(nextAssignedConfigIdsByProductLineId)
+            } catch (error) {
+                console.error("Failed to load configurables:", error)
+                setErrorMessage("Could not load configurables.")
+            }
+        }
+
+        void loadConfigs()
+    }, [])
+
+    useEffect(() => {
         const loadHierarchy = async () => {
             if (!selectedProductId) {
                 setProductLines([])
@@ -97,6 +154,18 @@ export default function ProductManagementPage() {
 
         loadHierarchy()
     }, [selectedProductId])
+
+    const sortedConfigs = useMemo(
+        () =>
+            [...configs].sort((a, b) => {
+                if (a.displayOrder !== b.displayOrder) {
+                    return a.displayOrder - b.displayOrder
+                }
+
+                return a.id.localeCompare(b.id)
+            }),
+        [configs]
+    )
 
     const handleGalleryActiveStateChange = useCallback((isActive: boolean) => {
         setActiveEditorKey((current) => {
@@ -329,8 +398,108 @@ export default function ProductManagementPage() {
         }
     }
 
+    const handleAssignedProductConfigToggle = useCallback(
+        async (config: ConfigWithOptions, isSelected: boolean) => {
+            if (!selectedProductId) {
+                return
+            }
+
+            setErrorMessage("")
+            setIsPersistingSelectedProduct(true)
+
+            try {
+                const childProductLineIds = productLines.map((line) => line.id)
+
+                if (isSelected) {
+                    await Promise.all([
+                        deleteMapProdConfig(selectedProductId, config.id),
+                        ...childProductLineIds.map((productLineId) =>
+                            deleteMapProdLineConfig(productLineId, config.id)
+                        )
+                    ])
+
+                    setAssignedConfigIdsByProductId((current) => ({
+                        ...current,
+                        [selectedProductId]: (current[selectedProductId] ?? []).filter((id) => id !== config.id)
+                    }))
+                    setAssignedConfigIdsByProductLineId((current) => {
+                        const next = { ...current }
+
+                        childProductLineIds.forEach((productLineId) => {
+                            next[productLineId] = (next[productLineId] ?? []).filter((id) => id !== config.id)
+                        })
+
+                        return next
+                    })
+                } else {
+                    const missingChildProductLineIds = childProductLineIds.filter(
+                        (productLineId) => !(assignedConfigIdsByProductLineId[productLineId] ?? []).includes(config.id)
+                    )
+
+                    await Promise.all([
+                        createMapProdConfig(selectedProductId, config.id),
+                        ...missingChildProductLineIds.map((productLineId) =>
+                            createMapProdLineConfig(productLineId, config.id)
+                        )
+                    ])
+
+                    setAssignedConfigIdsByProductId((current) => ({
+                        ...current,
+                        [selectedProductId]: [...(current[selectedProductId] ?? []), config.id]
+                    }))
+                    setAssignedConfigIdsByProductLineId((current) => {
+                        const next = { ...current }
+
+                        missingChildProductLineIds.forEach((productLineId) => {
+                            next[productLineId] = [...(next[productLineId] ?? []), config.id]
+                        })
+
+                        return next
+                    })
+                }
+            } catch (error) {
+                console.error("Failed to persist product-config mapping:", error)
+                setErrorMessage("Unable to update assigned configurables for the selected product.")
+            } finally {
+                setIsPersistingSelectedProduct(false)
+            }
+        },
+        [assignedConfigIdsByProductLineId, productLines, selectedProductId]
+    )
+
+    const handleAssignedConfigToggle = useCallback(
+        async (line: ProductMgmtParent, config: ConfigWithOptions, isSelected: boolean) => {
+            setErrorMessage("")
+            setPersistingProductLineIds((current) =>
+                current.includes(line.id) ? current : [...current, line.id]
+            )
+
+            try {
+                if (isSelected) {
+                    await deleteMapProdLineConfig(line.id, config.id)
+                    setAssignedConfigIdsByProductLineId((current) => ({
+                        ...current,
+                        [line.id]: (current[line.id] ?? []).filter((id) => id !== config.id)
+                    }))
+                } else {
+                    await createMapProdLineConfig(line.id, config.id)
+                    setAssignedConfigIdsByProductLineId((current) => ({
+                        ...current,
+                        [line.id]: [...(current[line.id] ?? []), config.id]
+                    }))
+                }
+            } catch (error) {
+                console.error("Failed to persist product-line-config mapping:", error)
+                setErrorMessage("Unable to update assigned configurables.")
+            } finally {
+                setPersistingProductLineIds((current) => current.filter((id) => id !== line.id))
+            }
+        },
+        []
+    )
+
     return (
-        <div className="mx-auto flex h-screen w-full max-w-7xl flex-col gap-5 overflow-hidden p-6">
+        <div className="flex h-screen w-full flex-col gap-5 overflow-hidden p-6">
             <div className="shrink-0">
                 <h1 className="text-2xl font-semibold tracking-tight">Product Management</h1>
                 <p className="mt-1 text-sm text-muted-foreground">
@@ -338,50 +507,71 @@ export default function ProductManagementPage() {
                 </p>
             </div>
 
-            <div className="grid min-h-0 flex-1 gap-5 md:grid-cols-[240px_minmax(0,1fr)]">
-                <Card className="min-h-0 overflow-visible md:flex md:h-full md:flex-col">
-                    <CardHeader>
-                        <CardTitle>Products</CardTitle>
-                        <CardDescription>Select the product scope.</CardDescription>
-                    </CardHeader>
-                    <CardContent className="min-h-0 flex-1 overflow-visible">
-                        {isLoadingProducts ? (
-                            <div className="h-full w-full max-w-60 space-y-2">
-                                <Skeleton className="h-11 w-full" />
-                                <Skeleton className="h-11 w-full" />
-                                <Skeleton className="h-14 w-full" />
-                            </div>
-                        ) : (
-                            <SelectionGallery
-                                items={products}
-                                selectedId={selectedProductId}
-                                getItemLabel={(product) => product.name}
-                                onSelect={(product) => setSelectedProductId(product.id)}
-                                onSave={saveProductName}
-                                onCreate={createNewProduct}
-                                onActiveStateChange={handleGalleryActiveStateChange}
-                                addButtonLabel="Add Product"
-                                reorder={{ onReorder: reorderProducts }}
-                                disabled={galleryInteractionLocked}
-                                className="h-full"
-                                emptyMessage="No products found."
-                            />
-                        )}
-                    </CardContent>
-                </Card>
-
-                <Card className="flex min-h-0 min-w-0 flex-col">
-                    <CardHeader>
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                            <div>
-                                <CardTitle>Product Lines and Models</CardTitle>
-                                <CardDescription>
-                                    Expand a line to edit its models. Collapse all rows to reorder product lines.
-                                </CardDescription>
-                            </div>
+            <div className="grid min-h-0 flex-1 gap-3 md:grid-cols-[200px_minmax(0,1fr)]">
+                <div className="grid min-h-0 min-w-0 grid-rows-2 gap-5">
+                    <div className="flex min-h-0 min-w-0 flex-col gap-2">
+                        <div className="px-1">
+                            <h2 className="text-sm font-medium tracking-tight">Products</h2>
                         </div>
-                    </CardHeader>
-                    <CardContent className="min-h-0 flex-1 overflow-y-auto">
+                        <Card className="flex min-h-0 w-full flex-1 flex-col overflow-hidden py-0.5">
+                            <CardContent className="min-h-0 flex-1 overflow-visible px-2 py-2">
+                                {isLoadingProducts ? (
+                                    <div className="h-full w-full max-w-60 space-y-2">
+                                        <Skeleton className="h-11 w-full" />
+                                        <Skeleton className="h-11 w-full" />
+                                        <Skeleton className="h-14 w-full" />
+                                    </div>
+                                ) : (
+                                    <SelectionGallery
+                                        items={products}
+                                        selectedId={selectedProductId}
+                                        getItemLabel={(product) => product.name}
+                                        onSelect={(product) => setSelectedProductId(product.id)}
+                                        onSave={saveProductName}
+                                        onCreate={createNewProduct}
+                                        onActiveStateChange={handleGalleryActiveStateChange}
+                                        addButtonLabel="Add Product"
+                                        reorder={{ onReorder: reorderProducts }}
+                                        disabled={galleryInteractionLocked}
+                                        className="h-full"
+                                        emptyMessage="No products found."
+                                    />
+                                )}
+                            </CardContent>
+                        </Card>
+                    </div>
+
+                    <div className="flex min-h-0 min-w-0 flex-col gap-2">
+                        <div className="px-1">
+                            <h2 className="text-sm font-medium tracking-tight">Assigned Configurables</h2>
+                        </div>
+                        <Card className="flex min-h-0 w-full flex-1 flex-col overflow-hidden py-0.5">
+                            <CardContent className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+                                <PillList
+                                    items={sortedConfigs}
+                                    selectedIds={assignedConfigIdsByProductId[selectedProductId] ?? []}
+                                    getItemLabel={(config) => config.name}
+                                    onToggle={(config, isSelected) => {
+                                        void handleAssignedProductConfigToggle(config, isSelected)
+                                    }}
+                                    disabled={
+                                        !selectedProductId ||
+                                        galleryInteractionLocked ||
+                                        isPersistingSelectedProduct
+                                    }
+                                    pillClassName="max-w-full"
+                                    emptyMessage="No configurables found."
+                                />
+                            </CardContent>
+                        </Card>
+                    </div>
+                </div>
+
+                <div className="flex min-h-0 min-w-0 flex-col gap-2">
+                    <div className="px-1">
+                        <h2 className="text-sm font-medium tracking-tight">Product Lines</h2>
+                    </div>
+                    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
                         {isLoadingHierarchy ? (
                             <div className="space-y-3">
                                 <Skeleton className="h-14 w-full" />
@@ -399,13 +589,34 @@ export default function ProductManagementPage() {
                                 onReorderChildren={reorderModelsForLine}
                                 onActiveStateChange={handleHierarchyActiveStateChange}
                                 interactionLocked={hierarchyInteractionLocked}
+                                showParentSupplement
+                                parentSupplementLabel="Assigned Configurables"
+                                childSectionLabel="Models"
+                                renderParentSupplement={(parent) => (
+                                    <PillList
+                                        items={sortedConfigs}
+                                        selectedIds={assignedConfigIdsByProductLineId[parent.id] ?? []}
+                                        getItemLabel={(config) => config.name}
+                                        onToggle={(config, isSelected) => {
+                                            void handleAssignedConfigToggle(parent, config, isSelected)
+                                        }}
+                                        disabled={
+                                            activeEditorKey !== null ||
+                                            hierarchyInteractionLocked ||
+                                            persistingProductLineIds.includes(parent.id)
+                                        }
+                                        pillClassName="max-w-full"
+                                        emptyMessage="No configurables found."
+                                    />
+                                )}
                                 addParentLabel="Add Product Line"
                                 addChildLabel="Add Model"
+                                pinAddParentToBottom
                                 emptyMessage="No product lines found for this product."
                             />
                         )}
-                    </CardContent>
-                </Card>
+                    </div>
+                </div>
             </div>
 
             {errorMessage && (

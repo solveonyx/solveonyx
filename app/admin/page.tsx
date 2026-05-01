@@ -2,7 +2,7 @@ import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/ca
 
 export default function AdminHomePage() {
     return (
-        <div className="mx-auto flex min-h-screen max-w-4xl items-center p-6">
+        <div className="flex min-h-screen w-full items-center p-6">
             <Card className="w-full">
                 <CardHeader>
                     <CardTitle className="text-2xl">SolveOnyx CX Admin</CardTitle>

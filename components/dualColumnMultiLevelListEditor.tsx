@@ -65,10 +65,28 @@ type DualColumnMultiLevelListEditorProps<
     childSectionLabel?: string
     childRowSupplementLabel?: string
     renderChildRowSupplement?: (parent: TParent, child: TChild) => ReactNode
+    pinAddParentToBottom?: boolean
 }
 
 function sortableDisplayOrder(value: number | null | undefined): number {
     return typeof value === "number" ? value : Number.POSITIVE_INFINITY
+}
+
+function getFadeMaskStyle(showTopFade: boolean, showBottomFade: boolean) {
+    let maskImage = "none"
+
+    if (showTopFade && showBottomFade) {
+        maskImage = "linear-gradient(to bottom, transparent 0, black 75px, black calc(100% - 75px), transparent 100%)"
+    } else if (showTopFade) {
+        maskImage = "linear-gradient(to bottom, transparent 0, black 75px, black 100%)"
+    } else if (showBottomFade) {
+        maskImage = "linear-gradient(to bottom, black 0, black calc(100% - 75px), transparent 100%)"
+    }
+
+    return {
+        WebkitMaskImage: maskImage,
+        maskImage
+    }
 }
 
 export function DualColumnMultiLevelListEditor<
@@ -95,7 +113,8 @@ export function DualColumnMultiLevelListEditor<
     renderParentSupplement,
     childSectionLabel = "Items",
     childRowSupplementLabel = "Details",
-    renderChildRowSupplement
+    renderChildRowSupplement,
+    pinAddParentToBottom = false
 }: DualColumnMultiLevelListEditorProps<TChild, TParent>) {
     const PARENT_LOCK_KEY = "parent"
     const [expandedSection, setExpandedSection] = useState<{
@@ -113,6 +132,9 @@ export function DualColumnMultiLevelListEditor<
     const [activeEditorKey, setActiveEditorKey] = useState<string | null>(null)
     const newParentInputRef = useRef<HTMLInputElement | null>(null)
     const editParentInputRef = useRef<HTMLInputElement | null>(null)
+    const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+    const [showTopFade, setShowTopFade] = useState(false)
+    const [showBottomFade, setShowBottomFade] = useState(false)
 
     const sortedParents = useMemo(() => {
         const clone = [...items]
@@ -382,6 +404,38 @@ export function DualColumnMultiLevelListEditor<
         editParentInputRef.current?.focus()
     }, [editingParentId])
 
+    useEffect(() => {
+        if (!pinAddParentToBottom) {
+            return
+        }
+
+        const node = scrollContainerRef.current
+        if (!node) {
+            return
+        }
+
+        const updateFadeState = () => {
+            const { scrollTop, clientHeight, scrollHeight } = node
+            const maxScrollTop = Math.max(0, scrollHeight - clientHeight)
+            setShowTopFade(scrollTop > 1)
+            setShowBottomFade(scrollTop < maxScrollTop - 1)
+        }
+
+        updateFadeState()
+        node.addEventListener("scroll", updateFadeState, { passive: true })
+        window.addEventListener("resize", updateFadeState)
+        const resizeObserver = new ResizeObserver(() => {
+            updateFadeState()
+        })
+        resizeObserver.observe(node)
+
+        return () => {
+            node.removeEventListener("scroll", updateFadeState)
+            window.removeEventListener("resize", updateFadeState)
+            resizeObserver.disconnect()
+        }
+    }, [items, pinAddParentToBottom])
+
     if (sortedParents.length === 0 && !canAddParent) {
         return (
             <div className="rounded-lg border border-dashed bg-muted/30 p-4 text-sm text-muted-foreground">
@@ -391,10 +445,21 @@ export function DualColumnMultiLevelListEditor<
     }
 
     return (
-        <div className="space-y-3">
+        <div className={cn("w-full max-w-[800px] space-y-3", pinAddParentToBottom && "flex h-full min-h-0 flex-col")}>
             <div
-                className="space-y-3"
-                ref={canReorderParents ? parentSortable.setContainerElement : undefined}
+                className={cn(
+                    "space-y-3",
+                    pinAddParentToBottom && "min-h-0 flex-1 overflow-y-auto pr-1"
+                )}
+                style={pinAddParentToBottom ? getFadeMaskStyle(showTopFade, showBottomFade) : undefined}
+                ref={(node) => {
+                    if (pinAddParentToBottom) {
+                        scrollContainerRef.current = node
+                    }
+                    if (canReorderParents) {
+                        parentSortable.setContainerElement(node)
+                    }
+                }}
             >
                 {sortedParents.map((parent) => {
                     const canExpand = isParentExpandable(parent)
@@ -578,43 +643,6 @@ export function DualColumnMultiLevelListEditor<
                                         )}
 
                                         <div className="col-span-2 flex min-w-0 flex-col gap-1">
-                                            {hasSupplementSection ? (
-                                                <div
-                                                    className={cn(
-                                                        "space-y-2 rounded-md border border-border/60 px-2 py-1",
-                                                        isSupplementExpanded && "bg-muted/10"
-                                                    )}
-                                                >
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => toggleSupplementExpanded(parent.id)}
-                                                        disabled={expansionIsLocked}
-                                                        className={cn(
-                                                            toggleButtonClass,
-                                                            expansionIsLocked
-                                                                ? EDITOR_LOCKED_DIMMED_CLASS
-                                                                : EDITOR_ICON_BUTTON_INTERACTIVE_CLASS
-                                                        )}
-                                                        aria-label={
-                                                            isSupplementExpanded
-                                                                ? `Collapse ${parentSupplementLabel}`
-                                                                : `Expand ${parentSupplementLabel}`
-                                                        }
-                                                    >
-                                                        {isSupplementExpanded ? <ChevronDown /> : <ChevronRight />}
-                                                        <span className="text-xs font-medium uppercase tracking-[0.14em]">
-                                                            {parentSupplementLabel}
-                                                        </span>
-                                                    </button>
-
-                                                    {isSupplementExpanded ? (
-                                                        <div className="border-t pt-3">
-                                                            {parentSupplement}
-                                                        </div>
-                                                    ) : null}
-                                                </div>
-                                            ) : null}
-
                                             {showOptionsSection ? (
                                                 <div
                                                     className={cn(
@@ -697,6 +725,43 @@ export function DualColumnMultiLevelListEditor<
                                                     ) : null}
                                                 </div>
                                             ) : null}
+
+                                            {hasSupplementSection ? (
+                                                <div
+                                                    className={cn(
+                                                        "space-y-2 rounded-md border border-border/60 px-2 py-1",
+                                                        isSupplementExpanded && "bg-muted/10"
+                                                    )}
+                                                >
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => toggleSupplementExpanded(parent.id)}
+                                                        disabled={expansionIsLocked}
+                                                        className={cn(
+                                                            toggleButtonClass,
+                                                            expansionIsLocked
+                                                                ? EDITOR_LOCKED_DIMMED_CLASS
+                                                                : EDITOR_ICON_BUTTON_INTERACTIVE_CLASS
+                                                        )}
+                                                        aria-label={
+                                                            isSupplementExpanded
+                                                                ? `Collapse ${parentSupplementLabel}`
+                                                                : `Expand ${parentSupplementLabel}`
+                                                        }
+                                                    >
+                                                        {isSupplementExpanded ? <ChevronDown /> : <ChevronRight />}
+                                                        <span className="text-xs font-medium uppercase tracking-[0.14em]">
+                                                            {parentSupplementLabel}
+                                                        </span>
+                                                    </button>
+
+                                                    {isSupplementExpanded ? (
+                                                        <div className="border-t pt-3">
+                                                            {parentSupplement}
+                                                        </div>
+                                                    ) : null}
+                                                </div>
+                                            ) : null}
                                         </div>
                                     </div>
                                 </div>
@@ -736,14 +801,16 @@ export function DualColumnMultiLevelListEditor<
             )}
 
             {canAddParent && !isAddingParent && (
-                <Button
-                    variant={sortedParents.length === 0 ? "default" : "outline"}
-                    onClick={startAddingParent}
-                    disabled={isCreatingParent || !canStartParentAction}
-                >
-                    <Plus />
-                    {addParentLabel}
-                </Button>
+                <div className={cn(pinAddParentToBottom && "shrink-0")}>
+                    <Button
+                        variant={sortedParents.length === 0 ? "default" : "outline"}
+                        onClick={startAddingParent}
+                        disabled={isCreatingParent || !canStartParentAction}
+                    >
+                        <Plus />
+                        {addParentLabel}
+                    </Button>
+                </div>
             )}
 
             {errorMessage && <p className="text-sm text-red-600">{errorMessage}</p>}

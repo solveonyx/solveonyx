@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ChevronDown, ChevronRight, GripVertical, Pencil, Plus, Save, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -36,10 +36,32 @@ type MultiLevelListEditorProps<
     onReorderParents?: (items: TParent[]) => void
     onReorderChildren?: (parent: TParent, items: TChild[]) => void
     canExpandParent?: (parent: TParent) => boolean
+    showParentSupplement?: boolean
+    parentSupplementLabel?: string
+    renderParentSupplement?: (parent: TParent) => ReactNode
+    childSectionLabel?: string
+    pinAddParentToBottom?: boolean
 }
 
 function sortableDisplayOrder(value: number | null | undefined): number {
     return typeof value === "number" ? value : Number.POSITIVE_INFINITY
+}
+
+function getFadeMaskStyle(showTopFade: boolean, showBottomFade: boolean) {
+    let maskImage = "none"
+
+    if (showTopFade && showBottomFade) {
+        maskImage = "linear-gradient(to bottom, transparent 0, black 75px, black calc(100% - 75px), transparent 100%)"
+    } else if (showTopFade) {
+        maskImage = "linear-gradient(to bottom, transparent 0, black 75px, black 100%)"
+    } else if (showBottomFade) {
+        maskImage = "linear-gradient(to bottom, black 0, black calc(100% - 75px), transparent 100%)"
+    }
+
+    return {
+        WebkitMaskImage: maskImage,
+        maskImage
+    }
 }
 
 export function MultiLevelListEditor<
@@ -59,10 +81,18 @@ export function MultiLevelListEditor<
     emptyMessage = "No parent rows to display.",
     onReorderParents,
     onReorderChildren,
-    canExpandParent
+    canExpandParent,
+    showParentSupplement = false,
+    parentSupplementLabel = "Details",
+    renderParentSupplement,
+    childSectionLabel = "Items",
+    pinAddParentToBottom = false
 }: MultiLevelListEditorProps<TChild, TParent>) {
     const PARENT_LOCK_KEY = "parent"
-    const [expandedParentIds, setExpandedParentIds] = useState<Set<string>>(new Set())
+    const [expandedSection, setExpandedSection] = useState<{
+        parentId: string
+        type: "child" | "supplement"
+    } | null>(null)
     const [editingParentId, setEditingParentId] = useState<string | null>(null)
     const [parentDraftName, setParentDraftName] = useState("")
     const [isSavingParent, setIsSavingParent] = useState(false)
@@ -73,6 +103,9 @@ export function MultiLevelListEditor<
     const [activeEditorKey, setActiveEditorKey] = useState<string | null>(null)
     const newParentInputRef = useRef<HTMLInputElement | null>(null)
     const editParentInputRef = useRef<HTMLInputElement | null>(null)
+    const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+    const [showTopFade, setShowTopFade] = useState(false)
+    const [showBottomFade, setShowBottomFade] = useState(false)
 
     const sortedParents = useMemo(() => {
         const clone = [...items]
@@ -116,23 +149,32 @@ export function MultiLevelListEditor<
             return
         }
 
-        setExpandedParentIds(new Set([visibleChildParentId]))
+        setExpandedSection({
+            parentId: visibleChildParentId,
+            type: "child"
+        })
     }, [isParentExpandable, sortedParents, visibleChildParentId])
 
     useEffect(() => {
-        setExpandedParentIds((current) => {
-            const expandableIds = new Set(
-                sortedParents
-                    .filter((parent) => isParentExpandable(parent))
-                    .map((parent) => parent.id)
-            )
-            const next = new Set([...current].filter((id) => expandableIds.has(id)))
+        setExpandedSection((current) => {
+            if (!current) {
+                return current
+            }
 
-            return next.size === current.size ? current : next
+            if (current.type !== "child") {
+                return sortedParents.some((parent) => parent.id === current.parentId) ? current : null
+            }
+
+            const expandedParent = sortedParents.find((parent) => parent.id === current.parentId)
+            if (!expandedParent || !isParentExpandable(expandedParent)) {
+                return null
+            }
+
+            return current
         })
     }, [isParentExpandable, sortedParents])
 
-    const toggleExpanded = (parent: TParent) => {
+    const toggleChildExpanded = (parent: TParent) => {
         if (isExpansionLocked(interactionLocked, activeEditorKey)) {
             return
         }
@@ -141,12 +183,32 @@ export function MultiLevelListEditor<
             return
         }
 
-        setExpandedParentIds((current) => {
-            if (current.has(parent.id)) {
-                return new Set()
+        setExpandedSection((current) => {
+            if (current?.parentId === parent.id && current.type === "child") {
+                return null
             }
 
-            return new Set([parent.id])
+            return {
+                parentId: parent.id,
+                type: "child"
+            }
+        })
+    }
+
+    const toggleSupplementExpanded = (parentId: string) => {
+        if (isExpansionLocked(interactionLocked, activeEditorKey)) {
+            return
+        }
+
+        setExpandedSection((current) => {
+            if (current?.parentId === parentId && current.type === "supplement") {
+                return null
+            }
+
+            return {
+                parentId,
+                type: "supplement"
+            }
         })
     }
 
@@ -252,8 +314,7 @@ export function MultiLevelListEditor<
     const canStartParentAction = !parentIsLocked && !hasLocalParentActiveEditor
     const canSaveNewParent = newParentName.trim().length > 0
     const canSaveEditedParent = parentDraftName.trim().length > 0
-    const hasExpandedParent = expandedParentIds.size > 0
-    const allParentsCollapsed = !hasExpandedParent
+    const allParentsCollapsed = expandedSection === null
     const canReorderParents =
         Boolean(onReorderParents) &&
         sortedParents.length > 1 &&
@@ -304,6 +365,38 @@ export function MultiLevelListEditor<
         editParentInputRef.current?.focus()
     }, [editingParentId])
 
+    useEffect(() => {
+        if (!pinAddParentToBottom) {
+            return
+        }
+
+        const node = scrollContainerRef.current
+        if (!node) {
+            return
+        }
+
+        const updateFadeState = () => {
+            const { scrollTop, clientHeight, scrollHeight } = node
+            const maxScrollTop = Math.max(0, scrollHeight - clientHeight)
+            setShowTopFade(scrollTop > 1)
+            setShowBottomFade(scrollTop < maxScrollTop - 1)
+        }
+
+        updateFadeState()
+        node.addEventListener("scroll", updateFadeState, { passive: true })
+        window.addEventListener("resize", updateFadeState)
+        const resizeObserver = new ResizeObserver(() => {
+            updateFadeState()
+        })
+        resizeObserver.observe(node)
+
+        return () => {
+            node.removeEventListener("scroll", updateFadeState)
+            window.removeEventListener("resize", updateFadeState)
+            resizeObserver.disconnect()
+        }
+    }, [items, pinAddParentToBottom])
+
     if (sortedParents.length === 0 && !canAddParent) {
         return (
             <div className="rounded-lg border border-dashed bg-muted/30 p-4 text-sm text-muted-foreground">
@@ -313,18 +406,42 @@ export function MultiLevelListEditor<
     }
 
     return (
-        <div className="space-y-3">
+        <div className={cn("w-full max-w-[800px] space-y-3", pinAddParentToBottom && "flex h-full min-h-0 flex-col")}>
             <div
-                className="space-y-3"
-                ref={canReorderParents ? parentSortable.setContainerElement : undefined}
+                className={cn(
+                    "space-y-3",
+                    pinAddParentToBottom && "min-h-0 flex-1 overflow-y-auto pr-1"
+                )}
+                style={pinAddParentToBottom ? getFadeMaskStyle(showTopFade, showBottomFade) : undefined}
+                ref={(node) => {
+                    if (pinAddParentToBottom) {
+                        scrollContainerRef.current = node
+                    }
+                    if (canReorderParents) {
+                        parentSortable.setContainerElement(node)
+                    }
+                }}
             >
                 {sortedParents.map((parent) => {
                     const canExpand = isParentExpandable(parent)
-                    const isExpanded = canExpand && expandedParentIds.has(parent.id)
+                    const isChildExpanded =
+                        canExpand &&
+                        expandedSection?.parentId === parent.id &&
+                        expandedSection.type === "child"
                     const isEditing = editingParentId === parent.id
                     const showChildren = canExpand && (!visibleChildParentId || visibleChildParentId === parent.id)
                     const parentReorderIsAvailable = canReorderParents
                     const isDraggingRow = parentReorderIsAvailable && parentSortable.draggingId === parent.id
+                    const parentSupplement = showParentSupplement
+                        ? renderParentSupplement?.(parent)
+                        : null
+                    const hasSupplementSection = Boolean(showParentSupplement && parentSupplement)
+                    const isSupplementExpanded =
+                        hasSupplementSection &&
+                        expandedSection?.parentId === parent.id &&
+                        expandedSection.type === "supplement"
+                    const toggleButtonClass =
+                        "flex w-full items-center gap-1.5 rounded-sm py-1 text-left text-muted-foreground transition-colors"
 
                     return (
                         <div key={parent.id} className="space-y-2">
@@ -340,8 +457,8 @@ export function MultiLevelListEditor<
                                     isDraggingRow && "pointer-events-none relative z-20 bg-accent opacity-80 shadow-lg will-change-transform !transition-none"
                                 )}
                             >
-                                <div className="grid grid-cols-[auto_auto_minmax(0,1fr)_72px] items-center gap-3">
-                                    {Boolean(onReorderParents) && sortedParents.length > 1 && (
+                                <div className="flex items-start gap-3">
+                                    {Boolean(onReorderParents) && sortedParents.length > 1 ? (
                                         <Button
                                             type="button"
                                             variant="ghost"
@@ -364,133 +481,188 @@ export function MultiLevelListEditor<
                                                 !showParentReorderHandle && "pointer-events-none invisible"
                                             )}
                                         >
-                                            <GripVertical />
-                                        </Button>
-                                    )}
-
-                                    {canExpand ? (
-                                        <Button
-                                            type="button"
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={() => toggleExpanded(parent)}
-                                            disabled={expansionIsLocked}
-                                            className={cn(
-                                                `self-center w-8 px-0 ${EDITOR_ICON_BUTTON_CLASS}`,
-                                                expansionIsLocked
-                                                    ? EDITOR_LOCKED_DIMMED_CLASS
-                                                    : EDITOR_ICON_BUTTON_INTERACTIVE_CLASS
-                                            )}
-                                            aria-label={isExpanded ? "Collapse row" : "Expand row"}
-                                        >
-                                            {isExpanded ? <ChevronDown /> : <ChevronRight />}
+                                            <GripVertical className="size-[1.3em]" />
                                         </Button>
                                     ) : (
-                                        <span className="self-center w-8 shrink-0" aria-hidden="true" />
+                                        <span className="self-center w-7 shrink-0" aria-hidden="true" />
                                     )}
 
-                                    <div className="flex min-w-0 min-h-[44px] items-center">
+                                    <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_72px] gap-x-2 gap-y-3">
+                                        <div className="min-w-0 min-h-[44px]">
+                                            <div className="flex min-h-[44px] min-w-0 items-center gap-2">
+                                                <div className="min-w-0 flex-1">
+                                                    {isEditing ? (
+                                                        <Input
+                                                            ref={editParentInputRef}
+                                                            type="text"
+                                                            value={parentDraftName}
+                                                            onChange={(event) => setParentDraftName(event.target.value)}
+                                                            className="w-full"
+                                                        />
+                                                    ) : (
+                                                        <div
+                                                            className={cn(
+                                                                "flex h-8 items-center rounded-lg border border-transparent px-2.5 py-1 text-sm",
+                                                                expansionIsLocked && EDITOR_MUTED_TEXT_CLASS
+                                                            )}
+                                                        >
+                                                            <span className="truncate font-medium">{parent.name}</span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+
                                         {isEditing ? (
-                                            <Input
-                                                ref={editParentInputRef}
-                                                type="text"
-                                                value={parentDraftName}
-                                                onChange={(event) => setParentDraftName(event.target.value)}
-                                                className="w-full"
-                                            />
+                                            <div className="flex items-center gap-2 self-center justify-self-end">
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="icon-sm"
+                                                    onClick={() => saveParent(parent)}
+                                                    disabled={isSavingParent || !canSaveEditedParent}
+                                                    aria-label={isSavingParent ? "Saving" : "Save changes"}
+                                                    className={`${EDITOR_ICON_BUTTON_CLASS} ${EDITOR_ICON_BUTTON_INTERACTIVE_CLASS}`}
+                                                >
+                                                    <Save />
+                                                </Button>
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="icon-sm"
+                                                    onClick={cancelEditingParent}
+                                                    disabled={isSavingParent}
+                                                    aria-label="Cancel editing"
+                                                    className={`${EDITOR_ICON_BUTTON_CLASS} ${EDITOR_ICON_BUTTON_INTERACTIVE_CLASS}`}
+                                                >
+                                                    <X />
+                                                </Button>
+                                            </div>
+                                        ) : canEditParent ? (
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="icon-sm"
+                                                onClick={() => startEditingParent(parent)}
+                                                disabled={!canStartParentAction || isCreatingParent}
+                                                aria-label={`Edit ${parent.name}`}
+                                                className={`self-center justify-self-end ${EDITOR_ICON_BUTTON_CLASS} ${EDITOR_ICON_BUTTON_INTERACTIVE_CLASS}`}
+                                            >
+                                                <Pencil />
+                                            </Button>
                                         ) : (
+                                            <div className="w-[72px]" />
+                                        )}
+
+                                        <div className="col-span-2 flex min-w-0 flex-col gap-1">
                                             <div
                                                 className={cn(
-                                                    "flex h-8 items-center rounded-lg border border-transparent px-2.5 py-1 text-sm font-medium",
-                                                    expansionIsLocked && EDITOR_MUTED_TEXT_CLASS
+                                                    "space-y-2 rounded-md border border-border/60 px-2 py-1",
+                                                    isChildExpanded && "bg-muted/10"
                                                 )}
                                             >
-                                                <span className="truncate">{parent.name}</span>
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    {isEditing ? (
-                                        <div className="flex w-[72px] items-center justify-end gap-2">
-                                            <Button
-                                                type="button"
-                                                variant="ghost"
-                                                size="icon-sm"
-                                                onClick={() => saveParent(parent)}
-                                                disabled={isSavingParent || !canSaveEditedParent}
-                                                aria-label={isSavingParent ? "Saving" : "Save changes"}
-                                                className={`${EDITOR_ICON_BUTTON_CLASS} ${EDITOR_ICON_BUTTON_INTERACTIVE_CLASS}`}
-                                            >
-                                                <Save />
-                                            </Button>
-                                            <Button
-                                                type="button"
-                                                variant="ghost"
-                                                size="icon-sm"
-                                                onClick={cancelEditingParent}
-                                                disabled={isSavingParent}
-                                                aria-label="Cancel editing"
-                                                className={`${EDITOR_ICON_BUTTON_CLASS} ${EDITOR_ICON_BUTTON_INTERACTIVE_CLASS}`}
-                                            >
-                                                <X />
-                                            </Button>
-                                        </div>
-                                    ) : canEditParent ? (
-                                        <Button
-                                            type="button"
-                                            variant="ghost"
-                                            size="icon-sm"
-                                            onClick={() => startEditingParent(parent)}
-                                            disabled={!canStartParentAction || isCreatingParent}
-                                            aria-label={`Edit ${parent.name}`}
-                                            className={`justify-self-end self-center ${EDITOR_ICON_BUTTON_CLASS} ${EDITOR_ICON_BUTTON_INTERACTIVE_CLASS}`}
-                                        >
-                                            <Pencil />
-                                        </Button>
-                                    ) : (
-                                        <div className="w-[72px]" />
-                                    )}
-                                </div>
-
-                                {isExpanded && showChildren && !isDraggingRow && (
-                                    <div className="ml-8 mt-3 pl-4">
-                                        <ListEditor<TChild>
-                                            items={parent.children}
-                                            sortField="displayOrder"
-                                            editableField="name"
-                                            interactionLocked={
-                                                isLockedByOtherEditor(
-                                                    interactionLocked,
-                                                    activeEditorKey,
-                                                    `child:${parent.id}`
-                                                )
-                                            }
-                                            onActiveStateChange={(isActive) =>
-                                                handleChildActiveStateChange(`child:${parent.id}`, isActive)
-                                            }
-                                            onSave={
-                                                onSaveChild
-                                                    ? (child, newValue) => onSaveChild(parent, child, newValue)
-                                                    : undefined
-                                            }
-                                            onCreate={
-                                                onCreateChild
-                                                    ? (newValue) => onCreateChild(parent, newValue)
-                                                    : undefined
-                                            }
-                                            reorder={
-                                                onReorderChildren
-                                                    ? {
-                                                        onReorder: (children) =>
-                                                            onReorderChildren(parent, children)
+                                                <button
+                                                    type="button"
+                                                    onClick={() => toggleChildExpanded(parent)}
+                                                    disabled={expansionIsLocked || !canExpand}
+                                                    className={cn(
+                                                        toggleButtonClass,
+                                                        canExpand && !expansionIsLocked
+                                                            ? EDITOR_ICON_BUTTON_INTERACTIVE_CLASS
+                                                            : EDITOR_LOCKED_DIMMED_CLASS
+                                                    )}
+                                                    aria-label={
+                                                        isChildExpanded
+                                                            ? `Collapse ${childSectionLabel}`
+                                                            : `Expand ${childSectionLabel}`
                                                     }
-                                                    : undefined
-                                            }
-                                            addButtonLabel={addChildLabel}
-                                            emptyMessage="No child rows for this parent."
-                                        />
+                                                >
+                                                    {isChildExpanded ? <ChevronDown /> : <ChevronRight />}
+                                                    <span className="text-xs font-medium uppercase tracking-[0.14em]">
+                                                        {childSectionLabel}
+                                                    </span>
+                                                </button>
+
+                                                {isChildExpanded && showChildren && !isDraggingRow ? (
+                                                    <div className="pl-4">
+                                                        <ListEditor<TChild>
+                                                            items={parent.children}
+                                                            sortField="displayOrder"
+                                                            editableField="name"
+                                                            interactionLocked={
+                                                                isLockedByOtherEditor(
+                                                                    interactionLocked,
+                                                                    activeEditorKey,
+                                                                    `child:${parent.id}`
+                                                                )
+                                                            }
+                                                            onActiveStateChange={(isActive) =>
+                                                                handleChildActiveStateChange(`child:${parent.id}`, isActive)
+                                                            }
+                                                            onSave={
+                                                                onSaveChild
+                                                                    ? (child, newValue) => onSaveChild(parent, child, newValue)
+                                                                    : undefined
+                                                            }
+                                                            onCreate={
+                                                                onCreateChild
+                                                                    ? (newValue) => onCreateChild(parent, newValue)
+                                                                    : undefined
+                                                            }
+                                                            reorder={
+                                                                onReorderChildren
+                                                                    ? {
+                                                                        onReorder: (children) =>
+                                                                            onReorderChildren(parent, children)
+                                                                    }
+                                                                    : undefined
+                                                            }
+                                                            addButtonLabel={addChildLabel}
+                                                            emptyMessage="No child rows for this parent."
+                                                        />
+                                                    </div>
+                                                ) : null}
+                                            </div>
+
+                                            {hasSupplementSection ? (
+                                                <div
+                                                    className={cn(
+                                                        "space-y-2 rounded-md border border-border/60 px-2 py-1",
+                                                        isSupplementExpanded && "bg-muted/10"
+                                                    )}
+                                                >
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => toggleSupplementExpanded(parent.id)}
+                                                        disabled={expansionIsLocked}
+                                                        className={cn(
+                                                            toggleButtonClass,
+                                                            expansionIsLocked
+                                                                ? EDITOR_LOCKED_DIMMED_CLASS
+                                                                : EDITOR_ICON_BUTTON_INTERACTIVE_CLASS
+                                                        )}
+                                                        aria-label={
+                                                            isSupplementExpanded
+                                                                ? `Collapse ${parentSupplementLabel}`
+                                                                : `Expand ${parentSupplementLabel}`
+                                                        }
+                                                    >
+                                                        {isSupplementExpanded ? <ChevronDown /> : <ChevronRight />}
+                                                        <span className="text-xs font-medium uppercase tracking-[0.14em]">
+                                                            {parentSupplementLabel}
+                                                        </span>
+                                                    </button>
+
+                                                    {isSupplementExpanded ? (
+                                                        <div className="border-t pt-3">
+                                                            {parentSupplement}
+                                                        </div>
+                                                    ) : null}
+                                                </div>
+                                            ) : null}
+                                        </div>
                                     </div>
-                                )}
+                                </div>
                             </div>
                         </div>
                     )
@@ -526,14 +698,16 @@ export function MultiLevelListEditor<
             )}
 
             {canAddParent && !isAddingParent && (
-                <Button
-                    variant={sortedParents.length === 0 ? "default" : "outline"}
-                    onClick={startAddingParent}
-                    disabled={isCreatingParent || !canStartParentAction}
-                >
-                    <Plus />
-                    {addParentLabel}
-                </Button>
+                <div className={cn(pinAddParentToBottom && "shrink-0")}>
+                    <Button
+                        variant={sortedParents.length === 0 ? "default" : "outline"}
+                        onClick={startAddingParent}
+                        disabled={isCreatingParent || !canStartParentAction}
+                    >
+                        <Plus />
+                        {addParentLabel}
+                    </Button>
+                </div>
             )}
 
             {errorMessage && <p className="text-sm text-red-600">{errorMessage}</p>}
