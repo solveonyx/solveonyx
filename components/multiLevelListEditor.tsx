@@ -40,6 +40,8 @@ type MultiLevelListEditorProps<
     parentSupplementLabel?: string
     renderParentSupplement?: (parent: TParent) => ReactNode
     childSectionLabel?: string
+    childRowSupplementLabel?: string
+    renderChildRowSupplement?: (parent: TParent, child: TChild) => ReactNode
     pinAddParentToBottom?: boolean
 }
 
@@ -86,6 +88,8 @@ export function MultiLevelListEditor<
     parentSupplementLabel = "Details",
     renderParentSupplement,
     childSectionLabel = "Items",
+    childRowSupplementLabel = "Details",
+    renderChildRowSupplement,
     pinAddParentToBottom = false
 }: MultiLevelListEditorProps<TChild, TParent>) {
     const PARENT_LOCK_KEY = "parent"
@@ -589,6 +593,12 @@ export function MultiLevelListEditor<
                                                             items={parent.children}
                                                             sortField="displayOrder"
                                                             editableField="name"
+                                                            rowSupplementLabel={childRowSupplementLabel}
+                                                            renderRowSupplement={
+                                                                renderChildRowSupplement
+                                                                    ? (child) => renderChildRowSupplement(parent, child)
+                                                                    : undefined
+                                                            }
                                                             interactionLocked={
                                                                 isLockedByOtherEditor(
                                                                     interactionLocked,

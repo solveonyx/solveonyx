@@ -10,10 +10,16 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { fetchConfigHierarchy } from "@/services/configurableHierarchyService"
 import {
+    createMapModelConfig,
+    createMapModelConfigOption,
     createMapProdConfig,
     createMapProdLineConfig,
+    deleteMapModelConfig,
+    deleteMapModelConfigOption,
     deleteMapProdConfig,
     deleteMapProdLineConfig,
+    fetchMapModelConfigOptions,
+    fetchMapModelConfigs,
     fetchMapProdConfigs,
     fetchMapProdLineConfigs
 } from "@/services/mapProdConfig"
@@ -36,6 +42,10 @@ type ProductMgmtChild = HierarchyEditorChild & {
 
 type ProductMgmtParent = HierarchyEditorParent<ProductMgmtChild> & {
     productId: string
+}
+
+function isSingleSelectConfig(config: ConfigWithOptions) {
+    return config.configTypeName?.trim().toLowerCase() === "single select"
 }
 
 function toEditorItems(items: ProductLineWithModels[]): ProductMgmtParent[] {
@@ -64,6 +74,12 @@ export default function ProductManagementPage() {
         Record<string, string[]>
     >({})
     const [assignedConfigIdsByProductLineId, setAssignedConfigIdsByProductLineId] = useState<
+        Record<string, string[]>
+    >({})
+    const [assignedConfigIdsByModelId, setAssignedConfigIdsByModelId] = useState<
+        Record<string, string[]>
+    >({})
+    const [assignedConfigOptionIdsByModelId, setAssignedConfigOptionIdsByModelId] = useState<
         Record<string, string[]>
     >({})
     const [isPersistingSelectedProduct, setIsPersistingSelectedProduct] = useState(false)
@@ -96,10 +112,18 @@ export default function ProductManagementPage() {
     useEffect(() => {
         const loadConfigs = async () => {
             try {
-                const [configHierarchy, prodConfigMappings, prodLineConfigMappings] = await Promise.all([
+                const [
+                    configHierarchy,
+                    prodConfigMappings,
+                    prodLineConfigMappings,
+                    modelConfigMappings,
+                    modelConfigOptionMappings
+                ] = await Promise.all([
                     fetchConfigHierarchy(),
                     fetchMapProdConfigs(),
-                    fetchMapProdLineConfigs()
+                    fetchMapProdLineConfigs(),
+                    fetchMapModelConfigs(),
+                    fetchMapModelConfigOptions()
                 ])
 
                 const nextAssignedConfigIdsByProductId = prodConfigMappings.reduce<Record<string, string[]>>(
@@ -118,10 +142,26 @@ export default function ProductManagementPage() {
                     },
                     {}
                 )
+                const nextAssignedConfigIdsByModelId = modelConfigMappings.reduce<Record<string, string[]>>(
+                    (accumulator, mapping) => {
+                        const currentConfigIds = accumulator[mapping.modelId] ?? []
+                        accumulator[mapping.modelId] = [...currentConfigIds, mapping.configId]
+                        return accumulator
+                    },
+                    {}
+                )
+                const nextAssignedConfigOptionIdsByModelId =
+                    modelConfigOptionMappings.reduce<Record<string, string[]>>((accumulator, mapping) => {
+                        const currentOptionIds = accumulator[mapping.modelId] ?? []
+                        accumulator[mapping.modelId] = [...currentOptionIds, mapping.configOptionId]
+                        return accumulator
+                    }, {})
 
                 setConfigs(configHierarchy)
                 setAssignedConfigIdsByProductId(nextAssignedConfigIdsByProductId)
                 setAssignedConfigIdsByProductLineId(nextAssignedConfigIdsByProductLineId)
+                setAssignedConfigIdsByModelId(nextAssignedConfigIdsByModelId)
+                setAssignedConfigOptionIdsByModelId(nextAssignedConfigOptionIdsByModelId)
             } catch (error) {
                 console.error("Failed to load configurables:", error)
                 setErrorMessage("Could not load configurables.")
@@ -165,6 +205,119 @@ export default function ProductManagementPage() {
                 return a.id.localeCompare(b.id)
             }),
         [configs]
+    )
+
+    const productAssignedConfigs = useMemo(
+        () => {
+            const assignedConfigIdSet = new Set(assignedConfigIdsByProductId[selectedProductId] ?? [])
+            return sortedConfigs.filter((config) => assignedConfigIdSet.has(config.id))
+        },
+        [assignedConfigIdsByProductId, selectedProductId, sortedConfigs]
+    )
+
+    const getConfigOptionIds = useCallback(
+        (configId: string) => configs.find((config) => config.id === configId)?.options.map((option) => option.id) ?? [],
+        [configs]
+    )
+
+    const addModelAssignmentsForConfig = useCallback(
+        async (configId: string, modelIds: string[]) => {
+            if (modelIds.length === 0) {
+                return
+            }
+
+            const optionIds = getConfigOptionIds(configId)
+            const createOperations: Promise<unknown>[] = []
+
+            modelIds.forEach((modelId) => {
+                const assignedConfigIdSet = new Set(assignedConfigIdsByModelId[modelId] ?? [])
+                if (!assignedConfigIdSet.has(configId)) {
+                    createOperations.push(createMapModelConfig(modelId, configId))
+                }
+
+                const assignedOptionIdSet = new Set(assignedConfigOptionIdsByModelId[modelId] ?? [])
+                optionIds
+                    .filter((optionId) => !assignedOptionIdSet.has(optionId))
+                    .forEach((optionId) => {
+                        createOperations.push(createMapModelConfigOption(modelId, optionId))
+                    })
+            })
+
+            if (createOperations.length === 0) {
+                return
+            }
+
+            await Promise.all(createOperations)
+
+            setAssignedConfigIdsByModelId((current) => {
+                const next = { ...current }
+                modelIds.forEach((modelId) => {
+                    const nextConfigIds = new Set(next[modelId] ?? [])
+                    nextConfigIds.add(configId)
+                    next[modelId] = [...nextConfigIds]
+                })
+                return next
+            })
+
+            setAssignedConfigOptionIdsByModelId((current) => {
+                const next = { ...current }
+                modelIds.forEach((modelId) => {
+                    const nextOptionIds = new Set(next[modelId] ?? [])
+                    optionIds.forEach((optionId) => nextOptionIds.add(optionId))
+                    next[modelId] = [...nextOptionIds]
+                })
+                return next
+            })
+        },
+        [assignedConfigIdsByModelId, assignedConfigOptionIdsByModelId, getConfigOptionIds]
+    )
+
+    const removeModelAssignmentsForConfig = useCallback(
+        async (configId: string, modelIds: string[]) => {
+            if (modelIds.length === 0) {
+                return
+            }
+
+            const optionIds = getConfigOptionIds(configId)
+            const deleteOperations: Promise<unknown>[] = []
+
+            modelIds.forEach((modelId) => {
+                const assignedConfigIdSet = new Set(assignedConfigIdsByModelId[modelId] ?? [])
+                if (assignedConfigIdSet.has(configId)) {
+                    deleteOperations.push(deleteMapModelConfig(modelId, configId))
+                }
+
+                const assignedOptionIdSet = new Set(assignedConfigOptionIdsByModelId[modelId] ?? [])
+                optionIds
+                    .filter((optionId) => assignedOptionIdSet.has(optionId))
+                    .forEach((optionId) => {
+                        deleteOperations.push(deleteMapModelConfigOption(modelId, optionId))
+                    })
+            })
+
+            if (deleteOperations.length === 0) {
+                return
+            }
+
+            await Promise.all(deleteOperations)
+
+            setAssignedConfigIdsByModelId((current) => {
+                const next = { ...current }
+                modelIds.forEach((modelId) => {
+                    next[modelId] = (next[modelId] ?? []).filter((assignedConfigId) => assignedConfigId !== configId)
+                })
+                return next
+            })
+
+            setAssignedConfigOptionIdsByModelId((current) => {
+                const next = { ...current }
+                modelIds.forEach((modelId) => {
+                    next[modelId] = (next[modelId] ?? []).filter((optionId) => !optionIds.includes(optionId))
+                })
+                return next
+            })
+        },
+        [assignedConfigIdsByModelId, assignedConfigOptionIdsByModelId, getConfigOptionIds]
     )
 
     const handleGalleryActiveStateChange = useCallback((isActive: boolean) => {
@@ -292,6 +445,14 @@ export default function ProductManagementPage() {
         }
 
         const created = await createModel(line.id, trimmedName)
+        const assignedConfigIds = assignedConfigIdsByProductLineId[line.id] ?? []
+
+        if (assignedConfigIds.length > 0) {
+            await Promise.all(
+                assignedConfigIds.map((configId) => addModelAssignmentsForConfig(configId, [created.id]))
+            )
+        }
+
         setProductLines((prev) =>
             prev.map((item) =>
                 item.id === line.id
@@ -323,6 +484,19 @@ export default function ProductManagementPage() {
         }
 
         const created = await createProductLine(selectedProductId, trimmedName)
+        const assignedConfigIds = assignedConfigIdsByProductId[selectedProductId] ?? []
+
+        if (assignedConfigIds.length > 0) {
+            await Promise.all(
+                assignedConfigIds.map((configId) => createMapProdLineConfig(created.id, configId))
+            )
+
+            setAssignedConfigIdsByProductLineId((current) => ({
+                ...current,
+                [created.id]: assignedConfigIds
+            }))
+        }
+
         setProductLines((prev) => [
             ...prev,
             {
@@ -417,6 +591,10 @@ export default function ProductManagementPage() {
                             deleteMapProdLineConfig(productLineId, config.id)
                         )
                     ])
+                    await removeModelAssignmentsForConfig(
+                        config.id,
+                        productLines.flatMap((line) => line.children.map((model) => model.id))
+                    )
 
                     setAssignedConfigIdsByProductId((current) => ({
                         ...current,
@@ -442,6 +620,10 @@ export default function ProductManagementPage() {
                             createMapProdLineConfig(productLineId, config.id)
                         )
                     ])
+                    await addModelAssignmentsForConfig(
+                        config.id,
+                        productLines.flatMap((line) => line.children.map((model) => model.id))
+                    )
 
                     setAssignedConfigIdsByProductId((current) => ({
                         ...current,
@@ -464,7 +646,13 @@ export default function ProductManagementPage() {
                 setIsPersistingSelectedProduct(false)
             }
         },
-        [assignedConfigIdsByProductLineId, productLines, selectedProductId]
+        [
+            addModelAssignmentsForConfig,
+            assignedConfigIdsByProductLineId,
+            productLines,
+            removeModelAssignmentsForConfig,
+            selectedProductId
+        ]
     )
 
     const handleAssignedConfigToggle = useCallback(
@@ -475,14 +663,18 @@ export default function ProductManagementPage() {
             )
 
             try {
+                const modelIds = line.children.map((model) => model.id)
+
                 if (isSelected) {
                     await deleteMapProdLineConfig(line.id, config.id)
+                    await removeModelAssignmentsForConfig(config.id, modelIds)
                     setAssignedConfigIdsByProductLineId((current) => ({
                         ...current,
                         [line.id]: (current[line.id] ?? []).filter((id) => id !== config.id)
                     }))
                 } else {
                     await createMapProdLineConfig(line.id, config.id)
+                    await addModelAssignmentsForConfig(config.id, modelIds)
                     setAssignedConfigIdsByProductLineId((current) => ({
                         ...current,
                         [line.id]: [...(current[line.id] ?? []), config.id]
@@ -495,7 +687,86 @@ export default function ProductManagementPage() {
                 setPersistingProductLineIds((current) => current.filter((id) => id !== line.id))
             }
         },
-        []
+        [addModelAssignmentsForConfig, removeModelAssignmentsForConfig]
+    )
+
+    const handleAssignedModelOptionToggle = useCallback(
+        async (
+            line: ProductMgmtParent,
+            model: ProductMgmtChild,
+            config: ConfigWithOptions,
+            optionId: string,
+            isSelected: boolean
+        ) => {
+            setErrorMessage("")
+            setPersistingProductLineIds((current) =>
+                current.includes(line.id) ? current : [...current, line.id]
+            )
+
+            try {
+                if (isSelected) {
+                    const configOptionIds = getConfigOptionIds(config.id)
+                    const remainingAssignedOptionIds = (assignedConfigOptionIdsByModelId[model.id] ?? [])
+                        .filter((id) => id !== optionId && configOptionIds.includes(id))
+                    const operations: Promise<unknown>[] = [
+                        deleteMapModelConfigOption(model.id, optionId)
+                    ]
+
+                    if (remainingAssignedOptionIds.length === 0) {
+                        operations.push(deleteMapModelConfig(model.id, config.id))
+                    }
+
+                    await Promise.all(operations)
+
+                    setAssignedConfigOptionIdsByModelId((current) => ({
+                        ...current,
+                        [model.id]: (current[model.id] ?? []).filter((id) => id !== optionId)
+                    }))
+
+                    if (remainingAssignedOptionIds.length === 0) {
+                        setAssignedConfigIdsByModelId((current) => ({
+                            ...current,
+                            [model.id]: (current[model.id] ?? []).filter((id) => id !== config.id)
+                        }))
+                    }
+                } else {
+                    const assignedConfigIdSet = new Set(assignedConfigIdsByModelId[model.id] ?? [])
+                    const operations: Promise<unknown>[] = []
+
+                    if (!assignedConfigIdSet.has(config.id)) {
+                        operations.push(createMapModelConfig(model.id, config.id))
+                    }
+
+                    operations.push(createMapModelConfigOption(model.id, optionId))
+                    await Promise.all(operations)
+
+                    setAssignedConfigIdsByModelId((current) => {
+                        const nextConfigIds = new Set(current[model.id] ?? [])
+                        nextConfigIds.add(config.id)
+
+                        return {
+                            ...current,
+                            [model.id]: [...nextConfigIds]
+                        }
+                    })
+                    setAssignedConfigOptionIdsByModelId((current) => {
+                        const nextOptionIds = new Set(current[model.id] ?? [])
+                        nextOptionIds.add(optionId)
+
+                        return {
+                            ...current,
+                            [model.id]: [...nextOptionIds]
+                        }
+                    })
+                }
+            } catch (error) {
+                console.error("Failed to persist model-config option mapping:", error)
+                setErrorMessage("Unable to update configurable options for the selected model.")
+            } finally {
+                setPersistingProductLineIds((current) => current.filter((id) => id !== line.id))
+            }
+        },
+        [assignedConfigIdsByModelId, assignedConfigOptionIdsByModelId, getConfigOptionIds]
     )
 
     return (
@@ -592,9 +863,10 @@ export default function ProductManagementPage() {
                                 showParentSupplement
                                 parentSupplementLabel="Assigned Configurables"
                                 childSectionLabel="Models"
+                                childRowSupplementLabel="Configurable Options"
                                 renderParentSupplement={(parent) => (
                                     <PillList
-                                        items={sortedConfigs}
+                                        items={productAssignedConfigs}
                                         selectedIds={assignedConfigIdsByProductLineId[parent.id] ?? []}
                                         getItemLabel={(config) => config.name}
                                         onToggle={(config, isSelected) => {
@@ -606,9 +878,52 @@ export default function ProductManagementPage() {
                                             persistingProductLineIds.includes(parent.id)
                                         }
                                         pillClassName="max-w-full"
-                                        emptyMessage="No configurables found."
+                                        emptyMessage="No configurables assigned to this product."
                                     />
                                 )}
+                                renderChildRowSupplement={(parent, child) => {
+                                    const assignedConfigs = productAssignedConfigs.filter((config) =>
+                                        (assignedConfigIdsByProductLineId[parent.id] ?? []).includes(config.id) &&
+                                        isSingleSelectConfig(config)
+                                    )
+
+                                    if (assignedConfigs.length === 0) {
+                                        return <PillList items={[]} emptyMessage="No single-select configurables assigned to this product line." />
+                                    }
+
+                                    return (
+                                        <div className="space-y-3">
+                                            {assignedConfigs.map((config) => (
+                                                <div key={config.id} className="space-y-2">
+                                                    <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                                                        {config.name}
+                                                    </p>
+                                                    <PillList
+                                                        items={config.options}
+                                                        selectedIds={assignedConfigOptionIdsByModelId[child.id] ?? []}
+                                                        getItemLabel={(option) => option.name}
+                                                        onToggle={(option, isSelected) => {
+                                                            void handleAssignedModelOptionToggle(
+                                                                parent,
+                                                                child,
+                                                                config,
+                                                                option.id,
+                                                                isSelected
+                                                            )
+                                                        }}
+                                                        disabled={
+                                                            activeEditorKey !== null ||
+                                                            hierarchyInteractionLocked ||
+                                                            persistingProductLineIds.includes(parent.id)
+                                                        }
+                                                        pillClassName="max-w-full"
+                                                        emptyMessage="No configurable options found."
+                                                    />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )
+                                }}
                                 addParentLabel="Add Product Line"
                                 addChildLabel="Add Model"
                                 pinAddParentToBottom

@@ -36,11 +36,12 @@ export function ConfigHierarchyContextFilter({
     modelConfigs,
     modelConfigOptions
 }: ConfigHierarchyContextFilterProps) {
-    const [selectedProductId, setSelectedProductId] = useState<string>("all")
-    const [selectedProductLineId, setSelectedProductLineId] = useState<string>("all")
-    const [selectedModelId, setSelectedModelId] = useState<string>("all")
+    const [selectedProductIdState, setSelectedProductIdState] = useState<string>("")
+    const [selectedProductLineIdState, setSelectedProductLineIdState] = useState<string>("")
+    const [selectedModelIdState, setSelectedModelIdState] = useState<string>("")
     const [productLinesByProductId, setProductLinesByProductId] = useState<Record<string, ProductLine[]>>({})
     const [modelsByProductLineId, setModelsByProductLineId] = useState<Record<string, Model[]>>({})
+    const [checkedProductIds, setCheckedProductIds] = useState<string[]>([])
     const mappedProductIdSet = useMemo(
         () => new Set(prodConfigs.map((mapping) => mapping.prodId)),
         [prodConfigs]
@@ -53,23 +54,122 @@ export function ConfigHierarchyContextFilter({
         () => new Set(modelConfigOptions.map((mapping) => mapping.modelId)),
         [modelConfigOptions]
     )
+    const sortedProducts = useMemo(
+        () =>
+            products
+                .filter((product) => mappedProductIdSet.has(product.id))
+                .filter((product) => {
+                    if (!checkedProductIds.includes(product.id)) {
+                        return true
+                    }
+
+                    return (productLinesByProductId[product.id] ?? []).length > 0
+                })
+                .sort((a, b) => a.displayOrder - b.displayOrder),
+        [checkedProductIds, mappedProductIdSet, productLinesByProductId, products]
+    )
+    const selectedProductId = useMemo(() => {
+        const hasSelectedProduct = sortedProducts.some((product) => product.id === selectedProductIdState)
+        if (hasSelectedProduct) {
+            return selectedProductIdState
+        }
+
+        return sortedProducts[0]?.id ?? ""
+    }, [selectedProductIdState, sortedProducts])
+    const visibleProductLines = useMemo(
+        () => productLinesByProductId[selectedProductId] ?? [],
+        [productLinesByProductId, selectedProductId]
+    )
+    const selectedProductLineId = useMemo(() => {
+        const hasSelectedProductLine = visibleProductLines.some((productLine) => productLine.id === selectedProductLineIdState)
+        if (hasSelectedProductLine) {
+            return selectedProductLineIdState
+        }
+
+        return visibleProductLines[0]?.id ?? ""
+    }, [selectedProductLineIdState, visibleProductLines])
+    const visibleModels = useMemo(
+        () => modelsByProductLineId[selectedProductLineId] ?? [],
+        [modelsByProductLineId, selectedProductLineId]
+    )
+    const selectedModelId = useMemo(() => {
+        const hasSelectedModel = visibleModels.some((model) => model.id === selectedModelIdState)
+        if (hasSelectedModel) {
+            return selectedModelIdState
+        }
+
+        return visibleModels[0]?.id ?? ""
+    }, [selectedModelIdState, visibleModels])
 
     function handleProductChange(nextProductId: string) {
-        setSelectedProductId(nextProductId)
-        setSelectedProductLineId("all")
-        setSelectedModelId("all")
+        setSelectedProductIdState(nextProductId)
+        setSelectedProductLineIdState("")
+        setSelectedModelIdState("")
     }
 
     function handleProductLineChange(nextProductLineId: string) {
-        setSelectedProductLineId(nextProductLineId)
-        setSelectedModelId("all")
+        setSelectedProductLineIdState(nextProductLineId)
+        setSelectedModelIdState("")
     }
 
     useEffect(() => {
         let cancelled = false
 
+        async function preloadAssignedProductLines() {
+            const candidateProductIds = [...mappedProductIdSet].filter((productId) => !checkedProductIds.includes(productId))
+            if (candidateProductIds.length === 0) {
+                return
+            }
+
+            try {
+                const loadedEntries = await Promise.all(
+                    candidateProductIds.map(async (productId) => {
+                        const productLines = await fetchProductLines(productId)
+                        const assignedProductLines = await Promise.all(
+                            productLines
+                                .filter((productLine) => mappedProductLineIdSet.has(productLine.id))
+                                .map(async (productLine) => {
+                                    const models = await fetchModels(productLine.id)
+                                    return models.some((model) => mappedModelIdSet.has(model.id))
+                                        ? productLine
+                                        : null
+                                })
+                        )
+
+                        return {
+                            productId,
+                            productLines: assignedProductLines.filter((productLine): productLine is ProductLine => productLine !== null)
+                        }
+                    })
+                )
+
+                if (!cancelled) {
+                    setProductLinesByProductId((current) => {
+                        const next = { ...current }
+                        loadedEntries.forEach((entry) => {
+                            next[entry.productId] = entry.productLines
+                        })
+                        return next
+                    })
+                    setCheckedProductIds((current) => [...new Set([...current, ...candidateProductIds])])
+                }
+            } catch (error) {
+                console.error("preloadAssignedProductLines error:", error)
+            }
+        }
+
+        void preloadAssignedProductLines()
+
+        return () => {
+            cancelled = true
+        }
+    }, [checkedProductIds, mappedModelIdSet, mappedProductIdSet, mappedProductLineIdSet])
+
+    useEffect(() => {
+        let cancelled = false
+
         async function ensureProductLinesLoaded() {
-            if (selectedProductId === "all" || productLinesByProductId[selectedProductId]) {
+            if (!selectedProductId || productLinesByProductId[selectedProductId]) {
                 return
             }
 
@@ -98,7 +198,7 @@ export function ConfigHierarchyContextFilter({
         let cancelled = false
 
         async function ensureModelsLoadedForSelectedLine() {
-            if (selectedProductLineId === "all" || modelsByProductLineId[selectedProductLineId]) {
+            if (!selectedProductLineId || modelsByProductLineId[selectedProductLineId]) {
                 return
             }
 
@@ -127,7 +227,7 @@ export function ConfigHierarchyContextFilter({
         let cancelled = false
 
         async function ensureModelsLoadedForSelectedProduct() {
-            if (selectedProductId === "all" || selectedProductLineId !== "all") {
+            if (!selectedProductId || selectedProductLineId) {
                 return
             }
 
@@ -167,65 +267,18 @@ export function ConfigHierarchyContextFilter({
         }
     }, [mappedModelIdSet, modelsByProductLineId, productLinesByProductId, selectedProductId, selectedProductLineId])
 
-    const sortedProducts = useMemo(
-        () =>
-            products
-                .filter((product) => mappedProductIdSet.has(product.id))
-                .sort((a, b) => a.displayOrder - b.displayOrder),
-        [mappedProductIdSet, products]
-    )
-
-    const visibleProductLines = useMemo(
-        () => productLinesByProductId[selectedProductId] ?? [],
-        [productLinesByProductId, selectedProductId]
-    )
-
-    const visibleModels = useMemo(
-        () => modelsByProductLineId[selectedProductLineId] ?? [],
-        [modelsByProductLineId, selectedProductLineId]
-    )
-
-    const selectedProduct = useMemo(
-        () => sortedProducts.find((product) => product.id === selectedProductId) ?? null,
-        [selectedProductId, sortedProducts]
-    )
-
-    const selectedProductLine = useMemo(
-        () => visibleProductLines.find((productLine) => productLine.id === selectedProductLineId) ?? null,
-        [selectedProductLineId, visibleProductLines]
-    )
-
-    const selectedModel = useMemo(
-        () => visibleModels.find((model) => model.id === selectedModelId) ?? null,
-        [selectedModelId, visibleModels]
-    )
-
-    const overviewTitle = useMemo(() => {
-        if (selectedModel) {
-            return `${selectedModel.name} Configuration Hierarchy`
-        }
-
-        if (selectedProductLine) {
-            return `${selectedProductLine.name} Configuration Hierarchy`
-        }
-
-        if (selectedProduct) {
-            return `${selectedProduct.name} Configuration Hierarchy`
-        }
-
-        return "Configuration Hierarchy"
-    }, [selectedModel, selectedProduct, selectedProductLine])
+    const overviewTitle = "Configuration Hierarchy"
 
     const relevantModelIds = useMemo(() => {
-        if (selectedModelId !== "all") {
+        if (selectedModelId) {
             return new Set([selectedModelId])
         }
 
-        if (selectedProductLineId !== "all") {
+        if (selectedProductLineId) {
             return new Set((modelsByProductLineId[selectedProductLineId] ?? []).map((model) => model.id))
         }
 
-        if (selectedProductId !== "all") {
+        if (selectedProductId) {
             const productLines = productLinesByProductId[selectedProductId] ?? []
             return new Set(
                 productLines.flatMap((productLine) =>
@@ -244,7 +297,7 @@ export function ConfigHierarchyContextFilter({
     ])
 
     const filteredHierarchy = useMemo(() => {
-        const prodConfigIds = selectedProductId === "all"
+        const prodConfigIds = !selectedProductId
             ? null
             : new Set(
                 prodConfigs
@@ -252,7 +305,7 @@ export function ConfigHierarchyContextFilter({
                     .map((mapping) => mapping.configId)
             )
 
-        const prodLineConfigIds = selectedProductLineId === "all"
+        const prodLineConfigIds = !selectedProductLineId
             ? null
             : new Set(
                 prodLineConfigs
@@ -308,6 +361,7 @@ export function ConfigHierarchyContextFilter({
         selectedProductId,
         selectedProductLineId
     ])
+    const hasAnyAssignments = modelConfigOptions.length > 0 && sortedProducts.length > 0
 
     return (
         <div className="space-y-5">
@@ -318,6 +372,15 @@ export function ConfigHierarchyContextFilter({
                 </p>
             </div>
 
+            {!hasAnyAssignments ? (
+                <Alert>
+                    <AlertTitle>No assignments yet</AlertTitle>
+                    <AlertDescription>
+                        Assign configurables from Product Management to review the hierarchy here.
+                    </AlertDescription>
+                </Alert>
+            ) : (
+                <>
             <div className="space-y-3">
                 <div>
                     <Select value={selectedProductId} onValueChange={handleProductChange}>
@@ -325,7 +388,6 @@ export function ConfigHierarchyContextFilter({
                             <SelectValue placeholder="Product" />
                         </SelectTrigger>
                         <SelectContent position="popper" align="start">
-                            <SelectItem value="all">All Products</SelectItem>
                             {sortedProducts.map((product) => (
                                 <SelectItem key={product.id} value={product.id}>
                                     {product.name}
@@ -339,13 +401,12 @@ export function ConfigHierarchyContextFilter({
                     <Select
                         value={selectedProductLineId}
                         onValueChange={handleProductLineChange}
-                        disabled={selectedProductId === "all"}
+                        disabled={!selectedProductId}
                     >
                         <SelectTrigger className="w-full min-w-[220px] disabled:cursor-default sm:w-1/3">
                             <SelectValue placeholder="Product Line" />
                         </SelectTrigger>
                         <SelectContent position="popper" align="start">
-                            <SelectItem value="all">All Product Lines</SelectItem>
                             {visibleProductLines.map((productLine) => (
                                 <SelectItem key={productLine.id} value={productLine.id}>
                                     {productLine.name}
@@ -358,14 +419,13 @@ export function ConfigHierarchyContextFilter({
                 <div>
                     <Select
                         value={selectedModelId}
-                        onValueChange={setSelectedModelId}
-                        disabled={selectedProductLineId === "all"}
+                        onValueChange={setSelectedModelIdState}
+                        disabled={!selectedProductLineId}
                     >
                         <SelectTrigger className="w-full min-w-[220px] disabled:cursor-default sm:w-1/3">
                             <SelectValue placeholder="Model" />
                         </SelectTrigger>
                         <SelectContent position="popper" align="start">
-                            <SelectItem value="all">All Models</SelectItem>
                             {visibleModels.map((model) => (
                                 <SelectItem key={model.id} value={model.id}>
                                     {model.name}
@@ -407,6 +467,8 @@ export function ConfigHierarchyContextFilter({
                         ))}
                     </CardContent>
                 </Card>
+            )}
+                </>
             )}
         </div>
     )
