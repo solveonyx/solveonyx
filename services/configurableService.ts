@@ -13,6 +13,13 @@ export type UpdateConfigInput = {
     displayOrder?: number | null
 }
 
+export type UpdateConfigTypeTransitionResult = {
+    config: Config
+    removedConfigOptionCount: number
+    removedModelConfigOptionMappingCount: number
+    clearedSingleSelectOptions: boolean
+}
+
 export type UpdateConfigOptionInput = {
     configId?: string
     name?: string
@@ -223,6 +230,123 @@ export async function updateConfig(
         configTypeId: data.config_type_id,
         name: data.config_name,
         displayOrder: data.display_order
+    }
+}
+
+function isSingleSelectTypeName(configTypeName: string | null | undefined): boolean {
+    return (configTypeName ?? "").trim().toLowerCase() === "single select"
+}
+
+export async function updateConfigTypeWithCleanup(
+    configId: string,
+    nextConfigTypeId: string
+): Promise<UpdateConfigTypeTransitionResult> {
+    const { data: currentConfigRow, error: currentConfigError } = await supabase
+        .from("config")
+        .select("id, config_type_id")
+        .eq("id", configId)
+        .single()
+
+    if (currentConfigError) {
+        console.error("updateConfigTypeWithCleanup current config error:", currentConfigError)
+        throw currentConfigError
+    }
+
+    if (currentConfigRow.config_type_id === nextConfigTypeId) {
+        const config = await updateConfig(configId, { configTypeId: nextConfigTypeId })
+        return {
+            config,
+            removedConfigOptionCount: 0,
+            removedModelConfigOptionMappingCount: 0,
+            clearedSingleSelectOptions: false
+        }
+    }
+
+    const typeIds = [currentConfigRow.config_type_id, nextConfigTypeId]
+    const { data: configTypeRows, error: configTypeError } = await supabase
+        .from("config_type")
+        .select("id, config_type_name")
+        .in("id", typeIds)
+
+    if (configTypeError) {
+        console.error("updateConfigTypeWithCleanup config type lookup error:", configTypeError)
+        throw configTypeError
+    }
+
+    const configTypeNameById = new Map(
+        (configTypeRows ?? []).map((row) => [row.id, row.config_type_name as string])
+    )
+
+    const currentTypeIsSingleSelect = isSingleSelectTypeName(
+        configTypeNameById.get(currentConfigRow.config_type_id)
+    )
+    const nextTypeIsSingleSelect = isSingleSelectTypeName(configTypeNameById.get(nextConfigTypeId))
+    const shouldClearSingleSelectOptions = currentTypeIsSingleSelect && !nextTypeIsSingleSelect
+
+    let removedModelConfigOptionMappingCount = 0
+    if (shouldClearSingleSelectOptions) {
+        const { data: configOptionRows, error: configOptionLookupError } = await supabase
+            .from("config_option")
+            .select("id")
+            .eq("config_id", configId)
+
+        if (configOptionLookupError) {
+            console.error("updateConfigTypeWithCleanup config option lookup error:", configOptionLookupError)
+            throw configOptionLookupError
+        }
+
+        const configOptionIds = (configOptionRows ?? []).map((row) => row.id as string)
+
+        if (configOptionIds.length > 0) {
+            const { data: mappingRows, error: mappingLookupError } = await supabase
+                .from("map_model-config_option")
+                .select("model_id, config_option_id")
+                .in("config_option_id", configOptionIds)
+
+            if (mappingLookupError) {
+                console.error("updateConfigTypeWithCleanup mapping lookup error:", mappingLookupError)
+                throw mappingLookupError
+            }
+
+            removedModelConfigOptionMappingCount = (mappingRows ?? []).length
+        }
+    }
+
+    const { data: rpcRows, error: rpcError } = await supabase.rpc("admin_change_config_type", {
+        p_config_id: configId,
+        p_next_config_type_id: nextConfigTypeId
+    })
+
+    if (rpcError) {
+        console.error("updateConfigTypeWithCleanup rpc error:", rpcError)
+        throw rpcError
+    }
+
+    const rpcResult = Array.isArray(rpcRows) ? rpcRows[0] : null
+
+    const { data: updatedRow, error: updatedConfigError } = await supabase
+        .from("config")
+        .select("id, config_type_id, config_name, display_order")
+        .eq("id", configId)
+        .single()
+
+    if (updatedConfigError) {
+        console.error("updateConfigTypeWithCleanup updated config fetch error:", updatedConfigError)
+        throw updatedConfigError
+    }
+
+    const config: Config = {
+        id: updatedRow.id,
+        configTypeId: updatedRow.config_type_id,
+        name: updatedRow.config_name,
+        displayOrder: updatedRow.display_order
+    }
+
+    return {
+        config,
+        removedConfigOptionCount: rpcResult?.removed_config_option_count ?? 0,
+        removedModelConfigOptionMappingCount,
+        clearedSingleSelectOptions: rpcResult?.cleared_single_select_options ?? false
     }
 }
 

@@ -1,7 +1,8 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useAppShellLock } from "@/components/app-shell-lock-provider"
+import { ConfirmDialog } from "@/components/confirm-dialog"
 import { DualColumnMultiLevelListEditor } from "@/components/dualColumnMultiLevelListEditor"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -11,6 +12,7 @@ import {
     createConfigOption,
     fetchConfigTypes,
     updateConfig,
+    updateConfigTypeWithCleanup,
     updateConfigOption
 } from "@/services/configurableService"
 import { ConfigType, HierarchyEditorChild, HierarchyEditorParent } from "@/types"
@@ -55,6 +57,16 @@ export default function ConfigurationManagementPage() {
     const [isLoading, setIsLoading] = useState(true)
     const [activeEditorKey, setActiveEditorKey] = useState<string | null>(null)
     const [errorMessage, setErrorMessage] = useState("")
+    const [typeChangeDialog, setTypeChangeDialog] = useState<{
+        open: boolean
+        configName: string
+        nextTypeName: string
+    }>({
+        open: false,
+        configName: "",
+        nextTypeName: ""
+    })
+    const pendingTypeChangeConfirmationRef = useRef<((confirmed: boolean) => void) | null>(null)
     const { setNavigationLocked } = useAppShellLock()
 
     useEffect(() => {
@@ -112,9 +124,28 @@ export default function ConfigurationManagementPage() {
             throw new Error("Config type is required.")
         }
 
-        const updated = await updateConfig(line.id, { configTypeId })
         const nextTypeName =
             configTypeOptions.find((option) => option.value === configTypeId)?.label ?? line.configTypeName
+        const requiresConfirmation =
+            isSingleSelectConfig(line) && nextTypeName.trim().toLowerCase() !== "single select"
+
+        if (requiresConfirmation) {
+            const confirmed = await new Promise<boolean>((resolve) => {
+                pendingTypeChangeConfirmationRef.current = resolve
+                setTypeChangeDialog({
+                    open: true,
+                    configName: line.name,
+                    nextTypeName
+                })
+            })
+
+            if (!confirmed) {
+                return
+            }
+        }
+
+        const result = await updateConfigTypeWithCleanup(line.id, configTypeId)
+        const updated = result.config
 
         setConfigLines((prev) =>
             prev.map((item) =>
@@ -124,12 +155,23 @@ export default function ConfigurationManagementPage() {
                         configTypeId: updated.configTypeId,
                         configTypeName: nextTypeName,
                         name: updated.name,
-                        displayOrder: updated.displayOrder
+                        displayOrder: updated.displayOrder,
+                        children: result.clearedSingleSelectOptions ? [] : item.children
                     }
                     : item
             )
         )
     }
+
+    const closeTypeChangeDialog = useCallback((confirmed: boolean) => {
+        pendingTypeChangeConfirmationRef.current?.(confirmed)
+        pendingTypeChangeConfirmationRef.current = null
+        setTypeChangeDialog({
+            open: false,
+            configName: "",
+            nextTypeName: ""
+        })
+    }, [])
 
     const saveConfigOptionName = async (
         line: ConfigMgmtParent,
@@ -344,6 +386,15 @@ export default function ConfigurationManagementPage() {
                     <AlertDescription>{errorMessage}</AlertDescription>
                 </Alert>
             )}
+
+            <ConfirmDialog
+                open={typeChangeDialog.open}
+                title="Change Config Type?"
+                message={`Changing "${typeChangeDialog.configName}" to ${typeChangeDialog.nextTypeName} will remove all of its options and any model-option assignments tied to those options.`}
+                confirmLabel="Change Type"
+                onConfirm={() => closeTypeChangeDialog(true)}
+                onCancel={() => closeTypeChangeDialog(false)}
+            />
         </div>
     )
 }

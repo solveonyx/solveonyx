@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useAppShellLock } from "@/components/app-shell-lock-provider"
+import { ConfirmDialog } from "@/components/confirm-dialog"
 import { MultiLevelListEditor } from "@/components/multiLevelListEditor"
 import { PillList } from "@/components/pillList"
 import { SelectionGallery } from "@/components/selectionGallery"
@@ -10,18 +11,19 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { fetchConfigHierarchy } from "@/services/configurableHierarchyService"
 import {
+    assignProductConfigAssignment,
+    assignProductLineConfigAssignment,
     createMapModelConfig,
     createMapModelConfigOption,
-    createMapProdConfig,
     createMapProdLineConfig,
     deleteMapModelConfig,
     deleteMapModelConfigOption,
-    deleteMapProdConfig,
-    deleteMapProdLineConfig,
     fetchMapModelConfigOptions,
     fetchMapModelConfigs,
     fetchMapProdConfigs,
-    fetchMapProdLineConfigs
+    fetchMapProdLineConfigs,
+    removeProductConfigAssignment,
+    removeProductLineConfigAssignment
 } from "@/services/mapProdConfig"
 import { fetchProductHierarchy } from "@/services/productHierarchyService"
 import {
@@ -88,6 +90,18 @@ export default function ProductManagementPage() {
     const [isLoadingHierarchy, setIsLoadingHierarchy] = useState(false)
     const [activeEditorKey, setActiveEditorKey] = useState<string | null>(null)
     const [errorMessage, setErrorMessage] = useState("")
+    const [pendingRemovalDialog, setPendingRemovalDialog] = useState<{
+        open: boolean
+        title: string
+        message: string
+        onConfirm: (() => Promise<void>) | null
+    }>({
+        open: false,
+        title: "",
+        message: "",
+        onConfirm: null
+    })
+    const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false)
     const { setNavigationLocked } = useAppShellLock()
 
     useEffect(() => {
@@ -220,6 +234,39 @@ export default function ProductManagementPage() {
         [configs]
     )
 
+    const removeConfigFromModelAssignmentState = useCallback((configId: string, modelIds: string[]) => {
+        setAssignedConfigIdsByModelId((current) => {
+            const next = { ...current }
+
+            modelIds.forEach((modelId) => {
+                next[modelId] = (next[modelId] ?? []).filter((id) => id !== configId)
+            })
+
+            return next
+        })
+    }, [])
+
+    const removeConfigOptionsFromModelAssignmentState = useCallback(
+        (configId: string, modelIds: string[]) => {
+            const optionIds = new Set(getConfigOptionIds(configId))
+
+            if (optionIds.size === 0) {
+                return
+            }
+
+            setAssignedConfigOptionIdsByModelId((current) => {
+                const next = { ...current }
+
+                modelIds.forEach((modelId) => {
+                    next[modelId] = (next[modelId] ?? []).filter((id) => !optionIds.has(id))
+                })
+
+                return next
+            })
+        },
+        [getConfigOptionIds]
+    )
+
     const addModelAssignmentsForConfig = useCallback(
         async (configId: string, modelIds: string[]) => {
             if (modelIds.length === 0) {
@@ -227,31 +274,29 @@ export default function ProductManagementPage() {
             }
 
             const optionIds = getConfigOptionIds(configId)
-            const createOperations: Promise<unknown>[] = []
+            const uniqueModelIds = Array.from(new Set(modelIds))
+            const configCreateOperations = uniqueModelIds.map((modelId) =>
+                createMapModelConfig(modelId, configId)
+            )
+            const optionCreateOperations = uniqueModelIds.flatMap((modelId) =>
+                optionIds.map((optionId) => createMapModelConfigOption(modelId, optionId))
+            )
 
-            modelIds.forEach((modelId) => {
-                const assignedConfigIdSet = new Set(assignedConfigIdsByModelId[modelId] ?? [])
-                if (!assignedConfigIdSet.has(configId)) {
-                    createOperations.push(createMapModelConfig(modelId, configId))
-                }
-
-                const assignedOptionIdSet = new Set(assignedConfigOptionIdsByModelId[modelId] ?? [])
-                optionIds
-                    .filter((optionId) => !assignedOptionIdSet.has(optionId))
-                    .forEach((optionId) => {
-                        createOperations.push(createMapModelConfigOption(modelId, optionId))
-                    })
-            })
-
-            if (createOperations.length === 0) {
+            if (configCreateOperations.length === 0 && optionCreateOperations.length === 0) {
                 return
             }
 
-            await Promise.all(createOperations)
+            if (configCreateOperations.length > 0) {
+                await Promise.all(configCreateOperations)
+            }
+
+            if (optionCreateOperations.length > 0) {
+                await Promise.all(optionCreateOperations)
+            }
 
             setAssignedConfigIdsByModelId((current) => {
                 const next = { ...current }
-                modelIds.forEach((modelId) => {
+                uniqueModelIds.forEach((modelId) => {
                     const nextConfigIds = new Set(next[modelId] ?? [])
                     nextConfigIds.add(configId)
                     next[modelId] = [...nextConfigIds]
@@ -261,7 +306,7 @@ export default function ProductManagementPage() {
 
             setAssignedConfigOptionIdsByModelId((current) => {
                 const next = { ...current }
-                modelIds.forEach((modelId) => {
+                uniqueModelIds.forEach((modelId) => {
                     const nextOptionIds = new Set(next[modelId] ?? [])
                     optionIds.forEach((optionId) => nextOptionIds.add(optionId))
                     next[modelId] = [...nextOptionIds]
@@ -269,55 +314,7 @@ export default function ProductManagementPage() {
                 return next
             })
         },
-        [assignedConfigIdsByModelId, assignedConfigOptionIdsByModelId, getConfigOptionIds]
-    )
-
-    const removeModelAssignmentsForConfig = useCallback(
-        async (configId: string, modelIds: string[]) => {
-            if (modelIds.length === 0) {
-                return
-            }
-
-            const optionIds = getConfigOptionIds(configId)
-            const deleteOperations: Promise<unknown>[] = []
-
-            modelIds.forEach((modelId) => {
-                const assignedConfigIdSet = new Set(assignedConfigIdsByModelId[modelId] ?? [])
-                if (assignedConfigIdSet.has(configId)) {
-                    deleteOperations.push(deleteMapModelConfig(modelId, configId))
-                }
-
-                const assignedOptionIdSet = new Set(assignedConfigOptionIdsByModelId[modelId] ?? [])
-                optionIds
-                    .filter((optionId) => assignedOptionIdSet.has(optionId))
-                    .forEach((optionId) => {
-                        deleteOperations.push(deleteMapModelConfigOption(modelId, optionId))
-                    })
-            })
-
-            if (deleteOperations.length === 0) {
-                return
-            }
-
-            await Promise.all(deleteOperations)
-
-            setAssignedConfigIdsByModelId((current) => {
-                const next = { ...current }
-                modelIds.forEach((modelId) => {
-                    next[modelId] = (next[modelId] ?? []).filter((assignedConfigId) => assignedConfigId !== configId)
-                })
-                return next
-            })
-
-            setAssignedConfigOptionIdsByModelId((current) => {
-                const next = { ...current }
-                modelIds.forEach((modelId) => {
-                    next[modelId] = (next[modelId] ?? []).filter((optionId) => !optionIds.includes(optionId))
-                })
-                return next
-            })
-        },
-        [assignedConfigIdsByModelId, assignedConfigOptionIdsByModelId, getConfigOptionIds]
+        [getConfigOptionIds]
     )
 
     const handleGalleryActiveStateChange = useCallback((isActive: boolean) => {
@@ -578,66 +575,93 @@ export default function ProductManagementPage() {
                 return
             }
 
+            if (isSelected) {
+                const childProductLineIds = productLines.map((line) => line.id)
+                const modelIds = productLines.flatMap((line) => line.children.map((model) => model.id))
+
+                setPendingRemovalDialog({
+                    open: true,
+                    title: "Remove Product Configurable?",
+                    message: `Removing "${config.name}" from this product will also remove it from the product lines and models under this product, along with any related configurable option assignments.`,
+                    onConfirm: async () => {
+                        setErrorMessage("")
+                        setIsPersistingSelectedProduct(true)
+
+                        try {
+                            await removeProductConfigAssignment(selectedProductId, config.id)
+
+                            setAssignedConfigIdsByProductId((current) => ({
+                                ...current,
+                                [selectedProductId]: (current[selectedProductId] ?? []).filter((id) => id !== config.id)
+                            }))
+                            setAssignedConfigIdsByProductLineId((current) => {
+                                const next = { ...current }
+
+                                childProductLineIds.forEach((productLineId) => {
+                                    next[productLineId] = (next[productLineId] ?? []).filter((id) => id !== config.id)
+                                })
+
+                                return next
+                            })
+                            removeConfigFromModelAssignmentState(config.id, modelIds)
+                            removeConfigOptionsFromModelAssignmentState(config.id, modelIds)
+                        } catch (error) {
+                            console.error("Failed to remove product-config mapping:", error)
+                            setErrorMessage("Unable to update assigned configurables for the selected product.")
+                            throw error
+                        } finally {
+                            setIsPersistingSelectedProduct(false)
+                        }
+                    }
+                })
+
+                return
+            }
+
             setErrorMessage("")
             setIsPersistingSelectedProduct(true)
 
             try {
                 const childProductLineIds = productLines.map((line) => line.id)
+                const modelIds = productLines.flatMap((line) => line.children.map((model) => model.id))
+                const optionIds = getConfigOptionIds(config.id)
 
-                if (isSelected) {
-                    await Promise.all([
-                        deleteMapProdConfig(selectedProductId, config.id),
-                        ...childProductLineIds.map((productLineId) =>
-                            deleteMapProdLineConfig(productLineId, config.id)
-                        )
-                    ])
-                    await removeModelAssignmentsForConfig(
-                        config.id,
-                        productLines.flatMap((line) => line.children.map((model) => model.id))
-                    )
+                if (!isSelected) {
+                    await assignProductConfigAssignment(selectedProductId, config.id)
 
                     setAssignedConfigIdsByProductId((current) => ({
                         ...current,
-                        [selectedProductId]: (current[selectedProductId] ?? []).filter((id) => id !== config.id)
+                        [selectedProductId]: Array.from(new Set([...(current[selectedProductId] ?? []), config.id]))
                     }))
                     setAssignedConfigIdsByProductLineId((current) => {
                         const next = { ...current }
 
                         childProductLineIds.forEach((productLineId) => {
-                            next[productLineId] = (next[productLineId] ?? []).filter((id) => id !== config.id)
+                            next[productLineId] = Array.from(new Set([...(next[productLineId] ?? []), config.id]))
                         })
 
                         return next
                     })
-                } else {
-                    const missingChildProductLineIds = childProductLineIds.filter(
-                        (productLineId) => !(assignedConfigIdsByProductLineId[productLineId] ?? []).includes(config.id)
-                    )
-
-                    await Promise.all([
-                        createMapProdConfig(selectedProductId, config.id),
-                        ...missingChildProductLineIds.map((productLineId) =>
-                            createMapProdLineConfig(productLineId, config.id)
-                        )
-                    ])
-                    await addModelAssignmentsForConfig(
-                        config.id,
-                        productLines.flatMap((line) => line.children.map((model) => model.id))
-                    )
-
-                    setAssignedConfigIdsByProductId((current) => ({
-                        ...current,
-                        [selectedProductId]: [...(current[selectedProductId] ?? []), config.id]
-                    }))
-                    setAssignedConfigIdsByProductLineId((current) => {
+                    setAssignedConfigIdsByModelId((current) => {
                         const next = { ...current }
 
-                        missingChildProductLineIds.forEach((productLineId) => {
-                            next[productLineId] = [...(next[productLineId] ?? []), config.id]
+                        modelIds.forEach((modelId) => {
+                            next[modelId] = Array.from(new Set([...(next[modelId] ?? []), config.id]))
                         })
 
                         return next
                     })
+                    if (optionIds.length > 0) {
+                        setAssignedConfigOptionIdsByModelId((current) => {
+                            const next = { ...current }
+
+                            modelIds.forEach((modelId) => {
+                                next[modelId] = Array.from(new Set([...(next[modelId] ?? []), ...optionIds]))
+                            })
+
+                            return next
+                        })
+                    }
                 }
             } catch (error) {
                 console.error("Failed to persist product-config mapping:", error)
@@ -647,38 +671,84 @@ export default function ProductManagementPage() {
             }
         },
         [
-            addModelAssignmentsForConfig,
-            assignedConfigIdsByProductLineId,
+            getConfigOptionIds,
             productLines,
-            removeModelAssignmentsForConfig,
+            removeConfigFromModelAssignmentState,
+            removeConfigOptionsFromModelAssignmentState,
             selectedProductId
         ]
     )
 
     const handleAssignedConfigToggle = useCallback(
         async (line: ProductMgmtParent, config: ConfigWithOptions, isSelected: boolean) => {
+            const modelIds = line.children.map((model) => model.id)
+
+            if (isSelected) {
+                setPendingRemovalDialog({
+                    open: true,
+                    title: "Remove Product Line Configurable?",
+                    message: `Removing "${config.name}" from "${line.name}" will also remove it from the models in this product line, along with any related configurable option assignments.`,
+                    onConfirm: async () => {
+                        setErrorMessage("")
+                        setPersistingProductLineIds((current) =>
+                            current.includes(line.id) ? current : [...current, line.id]
+                        )
+
+                        try {
+                            await removeProductLineConfigAssignment(line.id, config.id)
+                            setAssignedConfigIdsByProductLineId((current) => ({
+                                ...current,
+                                [line.id]: (current[line.id] ?? []).filter((id) => id !== config.id)
+                            }))
+                            removeConfigFromModelAssignmentState(config.id, modelIds)
+                            removeConfigOptionsFromModelAssignmentState(config.id, modelIds)
+                        } catch (error) {
+                            console.error("Failed to remove product-line-config mapping:", error)
+                            setErrorMessage("Unable to update assigned configurables.")
+                            throw error
+                        } finally {
+                            setPersistingProductLineIds((current) => current.filter((id) => id !== line.id))
+                        }
+                    }
+                })
+
+                return
+            }
+
             setErrorMessage("")
             setPersistingProductLineIds((current) =>
                 current.includes(line.id) ? current : [...current, line.id]
             )
 
             try {
-                const modelIds = line.children.map((model) => model.id)
+                const optionIds = getConfigOptionIds(config.id)
 
-                if (isSelected) {
-                    await deleteMapProdLineConfig(line.id, config.id)
-                    await removeModelAssignmentsForConfig(config.id, modelIds)
+                if (!isSelected) {
+                    await assignProductLineConfigAssignment(line.id, config.id)
                     setAssignedConfigIdsByProductLineId((current) => ({
                         ...current,
-                        [line.id]: (current[line.id] ?? []).filter((id) => id !== config.id)
+                        [line.id]: Array.from(new Set([...(current[line.id] ?? []), config.id]))
                     }))
-                } else {
-                    await createMapProdLineConfig(line.id, config.id)
-                    await addModelAssignmentsForConfig(config.id, modelIds)
-                    setAssignedConfigIdsByProductLineId((current) => ({
-                        ...current,
-                        [line.id]: [...(current[line.id] ?? []), config.id]
-                    }))
+                    setAssignedConfigIdsByModelId((current) => {
+                        const next = { ...current }
+
+                        modelIds.forEach((modelId) => {
+                            next[modelId] = Array.from(new Set([...(next[modelId] ?? []), config.id]))
+                        })
+
+                        return next
+                    })
+                    if (optionIds.length > 0) {
+                        setAssignedConfigOptionIdsByModelId((current) => {
+                            const next = { ...current }
+
+                            modelIds.forEach((modelId) => {
+                                next[modelId] = Array.from(new Set([...(next[modelId] ?? []), ...optionIds]))
+                            })
+
+                            return next
+                        })
+                    }
                 }
             } catch (error) {
                 console.error("Failed to persist product-line-config mapping:", error)
@@ -687,8 +757,43 @@ export default function ProductManagementPage() {
                 setPersistingProductLineIds((current) => current.filter((id) => id !== line.id))
             }
         },
-        [addModelAssignmentsForConfig, removeModelAssignmentsForConfig]
+        [getConfigOptionIds, removeConfigFromModelAssignmentState, removeConfigOptionsFromModelAssignmentState]
     )
+
+    const closePendingRemovalDialog = useCallback(() => {
+        if (isConfirmingRemoval) {
+            return
+        }
+
+        setPendingRemovalDialog({
+            open: false,
+            title: "",
+            message: "",
+            onConfirm: null
+        })
+    }, [isConfirmingRemoval])
+
+    const confirmPendingRemoval = useCallback(async () => {
+        if (!pendingRemovalDialog.onConfirm) {
+            return
+        }
+
+        setIsConfirmingRemoval(true)
+
+        try {
+            await pendingRemovalDialog.onConfirm()
+            setPendingRemovalDialog({
+                open: false,
+                title: "",
+                message: "",
+                onConfirm: null
+            })
+        } catch {
+            return
+        } finally {
+            setIsConfirmingRemoval(false)
+        }
+    }, [pendingRemovalDialog])
 
     const handleAssignedModelOptionToggle = useCallback(
         async (
@@ -940,6 +1045,18 @@ export default function ProductManagementPage() {
                     <AlertDescription>{errorMessage}</AlertDescription>
                 </Alert>
             )}
+
+            <ConfirmDialog
+                open={pendingRemovalDialog.open}
+                title={pendingRemovalDialog.title}
+                message={pendingRemovalDialog.message}
+                confirmLabel="Remove"
+                isConfirming={isConfirmingRemoval}
+                onConfirm={() => {
+                    void confirmPendingRemoval()
+                }}
+                onCancel={closePendingRemovalDialog}
+            />
         </div>
     )
 }
