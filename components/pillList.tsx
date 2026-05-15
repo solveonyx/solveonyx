@@ -2,6 +2,7 @@
 
 import { Plus, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { emptyStateDefinitions } from "@/lib/emptyStateDefinitions"
 import { EDITOR_LOCKED_SUBTLE_DIMMED_CLASS, EDITOR_MUTED_TEXT_CLASS } from "@/lib/editorInteractions"
 import { cn } from "@/lib/utils"
 
@@ -56,7 +57,7 @@ export function PillList<TItem extends PillListItem, TSelected = TItem>({
     pillClassName,
     activePillClassName,
     inactivePillClassName,
-    emptyMessage = "No options available."
+    emptyMessage = emptyStateDefinitions.generic.pillListNoOptions
 }: PillListProps<TItem, TSelected>) {
     const selectedIdSet = new Set([
         ...(selectedIds ?? []),

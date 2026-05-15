@@ -1,8 +1,10 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Check, GripVertical, Pencil, Plus, X } from "lucide-react"
+import { GripVertical, Pencil, Plus, Save, Trash2, X } from "lucide-react"
 import { useSortableList } from "@/hooks/useSortableList"
+import { emptyStateDefinitions } from "@/lib/emptyStateDefinitions"
+import { uiTextDefinitions } from "@/lib/uiTextDefinitions"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -20,6 +22,7 @@ type SelectionGalleryProps<TItem extends GalleryItem> = {
     getItemLabel?: (item: TItem) => string
     onSelect?: (item: TItem) => void
     onSave?: (item: TItem, newValue: string) => Promise<void>
+    onDelete?: (item: TItem) => Promise<void>
     onCreate?: (newValue: string) => Promise<void>
     onActiveStateChange?: (isActive: boolean) => void
     disabled?: boolean
@@ -48,13 +51,14 @@ export function SelectionGallery<TItem extends GalleryItem>({
     getItemLabel = defaultItemLabel,
     onSelect,
     onSave,
+    onDelete,
     onCreate,
     onActiveStateChange,
     disabled = false,
     className,
     itemClassName,
     selectedItemClassName,
-    emptyMessage = "No items available.",
+    emptyMessage = emptyStateDefinitions.generic.selectionGalleryNoItems,
     addButtonLabel = "Add",
     reorder
 }: SelectionGalleryProps<TItem>) {
@@ -68,7 +72,7 @@ export function SelectionGallery<TItem extends GalleryItem>({
     const [errorMessage, setErrorMessage] = useState("")
     const inputRef = useRef<HTMLInputElement | null>(null)
     const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-    const canEdit = Boolean(onSave)
+    const canEdit = Boolean(onSave || onDelete)
     const canAdd = Boolean(onCreate)
     const canReorder =
         Boolean(reorder?.onReorder) &&
@@ -164,7 +168,28 @@ export function SelectionGallery<TItem extends GalleryItem>({
             setRevealedActionItemId(null)
         } catch (error) {
             console.error("SelectionGallery save error:", error)
-            setErrorMessage("Unable to save changes. Please try again.")
+            setErrorMessage(uiTextDefinitions.generic.componentFeedback.gallerySaveFailed)
+        } finally {
+            setIsSaving(false)
+        }
+    }
+
+    const deleteItem = async (item: TItem) => {
+        if (!onDelete) {
+            return
+        }
+
+        setErrorMessage("")
+        setIsSaving(true)
+
+        try {
+            await onDelete(item)
+            setEditingId(null)
+            setDraftValue("")
+            setRevealedActionItemId(null)
+        } catch (error) {
+            console.error("SelectionGallery delete error:", error)
+            setErrorMessage(uiTextDefinitions.generic.componentFeedback.galleryDeleteFailed)
         } finally {
             setIsSaving(false)
         }
@@ -184,7 +209,7 @@ export function SelectionGallery<TItem extends GalleryItem>({
             setNewDraftValue("")
         } catch (error) {
             console.error("SelectionGallery create error:", error)
-            setErrorMessage("Unable to add item. Please try again.")
+            setErrorMessage(uiTextDefinitions.generic.componentFeedback.galleryCreateFailed)
         } finally {
             setIsSaving(false)
         }
@@ -336,7 +361,7 @@ export function SelectionGallery<TItem extends GalleryItem>({
                                             "disabled:pointer-events-none disabled:opacity-50",
                                             isSelected
                                                 ? "bg-primary text-primary-foreground shadow-sm"
-                                                : "bg-card text-card-foreground hover:bg-muted/60",
+                                                : "bg-card text-card-foreground",
                                             itemClassName,
                                             isSelected && selectedItemClassName
                                         )}
@@ -374,6 +399,24 @@ export function SelectionGallery<TItem extends GalleryItem>({
 
                                 {isEditing ? (
                                     <div className="absolute top-1/2 right-2 z-10 flex -translate-y-1/2 items-center gap-1">
+                                        {onDelete ? (
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="icon-xs"
+                                                onClick={() => void deleteItem(item)}
+                                                disabled={isSaving}
+                                                aria-label="Delete item"
+                                                className={cn(
+                                                    "h-5 w-5 rounded-none bg-transparent p-0 shadow-none ring-0 active:not-aria-[haspopup]:translate-y-px",
+                                                    "text-destructive/70 hover:bg-transparent hover:text-destructive",
+                                                    "focus-visible:bg-transparent focus-visible:ring-0",
+                                                    "disabled:text-destructive/30"
+                                                )}
+                                            >
+                                                <Trash2 />
+                                            </Button>
+                                        ) : null}
                                         <Button
                                             type="button"
                                             variant="ghost"
@@ -388,7 +431,7 @@ export function SelectionGallery<TItem extends GalleryItem>({
                                                 "disabled:text-foreground/40"
                                             )}
                                         >
-                                            <Check />
+                                            <Save />
                                         </Button>
                                         <Button
                                             type="button"
@@ -456,7 +499,7 @@ export function SelectionGallery<TItem extends GalleryItem>({
                                         "disabled:text-foreground/40"
                                     )}
                                 >
-                                    <Check />
+                                    <Save />
                                 </Button>
                                 <Button
                                     type="button"

@@ -46,6 +46,15 @@ export type UpdateProductInput = {
     displayOrder?: number | null
 }
 
+export type DeleteProductResult = {
+    removedProductConfigMappingCount: number
+    removedProductLineConfigMappingCount: number
+    removedModelConfigMappingCount: number
+    removedModelConfigOptionMappingCount: number
+    removedProductLineCount: number
+    removedModelCount: number
+}
+
 // UPDATE PRODUCT
 export async function updateProduct(
     productId: string,
@@ -84,6 +93,115 @@ export async function updateProduct(
         id: data.id,
         name: data.prod_name,
         displayOrder: data.display_order
+    }
+}
+
+export async function deleteProduct(productId: string): Promise<DeleteProductResult> {
+    const { data: productLineRows, error: productLineLookupError } = await supabase
+        .from("prod_line")
+        .select("id")
+        .eq("prod_id", productId)
+
+    if (productLineLookupError) {
+        console.error("deleteProduct product line lookup error:", productLineLookupError)
+        throw productLineLookupError
+    }
+
+    const productLineIds = (productLineRows ?? []).map((row) => row.id as string)
+
+    const { data: modelRows, error: modelLookupError } = productLineIds.length > 0
+        ? await supabase.from("model").select("id").in("prod_line_id", productLineIds)
+        : { data: [], error: null }
+
+    if (modelLookupError) {
+        console.error("deleteProduct model lookup error:", modelLookupError)
+        throw modelLookupError
+    }
+
+    const modelIds = (modelRows ?? []).map((row) => row.id as string)
+
+    const [
+        productConfigCountResult,
+        productLineConfigCountResult,
+        modelConfigCountResult,
+        modelConfigOptionCountResult
+    ] = await Promise.all([
+        supabase.from("map_prod-config").select("config_id", { count: "exact", head: true }).eq("prod_id", productId),
+        productLineIds.length > 0
+            ? supabase.from("map_prod_line-config").select("config_id", { count: "exact", head: true }).in("prod_line_id", productLineIds)
+            : Promise.resolve({ count: 0, error: null }),
+        modelIds.length > 0
+            ? supabase.from("map_model-config").select("config_id", { count: "exact", head: true }).in("model_id", modelIds)
+            : Promise.resolve({ count: 0, error: null }),
+        modelIds.length > 0
+            ? supabase.from("map_model-config_option").select("config_option_id", { count: "exact", head: true }).in("model_id", modelIds)
+            : Promise.resolve({ count: 0, error: null })
+    ])
+
+    if (productConfigCountResult.error) {
+        console.error("deleteProduct product mapping count error:", productConfigCountResult.error)
+        throw productConfigCountResult.error
+    }
+    if (productLineConfigCountResult.error) {
+        console.error("deleteProduct product line mapping count error:", productLineConfigCountResult.error)
+        throw productLineConfigCountResult.error
+    }
+    if (modelConfigCountResult.error) {
+        console.error("deleteProduct model mapping count error:", modelConfigCountResult.error)
+        throw modelConfigCountResult.error
+    }
+    if (modelConfigOptionCountResult.error) {
+        console.error("deleteProduct model option mapping count error:", modelConfigOptionCountResult.error)
+        throw modelConfigOptionCountResult.error
+    }
+
+    if (modelIds.length > 0) {
+        const modelCleanupResults = await Promise.all([
+            supabase.from("map_model-config_option").delete().in("model_id", modelIds),
+            supabase.from("map_model-config").delete().in("model_id", modelIds),
+            supabase.from("model").delete().in("id", modelIds)
+        ])
+
+        const failedModelCleanup = modelCleanupResults.find((result) => result.error)
+        if (failedModelCleanup?.error) {
+            console.error("deleteProduct model cleanup error:", failedModelCleanup.error)
+            throw failedModelCleanup.error
+        }
+    }
+
+    if (productLineIds.length > 0) {
+        const productLineCleanupResults = await Promise.all([
+            supabase.from("map_prod_line-config").delete().in("prod_line_id", productLineIds),
+            supabase.from("prod_line").delete().in("id", productLineIds)
+        ])
+
+        const failedProductLineCleanup = productLineCleanupResults.find((result) => result.error)
+        if (failedProductLineCleanup?.error) {
+            console.error("deleteProduct product line cleanup error:", failedProductLineCleanup.error)
+            throw failedProductLineCleanup.error
+        }
+    }
+
+    const cleanupResults = await Promise.all([
+        supabase.from("map_prod-config").delete().eq("prod_id", productId),
+        supabase.from("prod").delete().eq("id", productId)
+    ])
+
+    const failedCleanup = cleanupResults.find((result) => result.error)
+    if (failedCleanup?.error) {
+        console.error("deleteProduct cleanup error:", failedCleanup.error)
+        throw failedCleanup.error
+    }
+
+    await reestablishProductDisplayOrder()
+
+    return {
+        removedProductConfigMappingCount: productConfigCountResult.count ?? 0,
+        removedProductLineConfigMappingCount: productLineConfigCountResult.count ?? 0,
+        removedModelConfigMappingCount: modelConfigCountResult.count ?? 0,
+        removedModelConfigOptionMappingCount: modelConfigOptionCountResult.count ?? 0,
+        removedProductLineCount: productLineIds.length,
+        removedModelCount: modelIds.length
     }
 }
 
@@ -154,6 +272,13 @@ export type UpdateProductLineInput = {
     displayOrder?: number | null
 }
 
+export type DeleteProductLineResult = {
+    removedProductLineConfigMappingCount: number
+    removedModelConfigMappingCount: number
+    removedModelConfigOptionMappingCount: number
+    removedModelCount: number
+}
+
 // UPDATE PRODUCT LINE
 export async function updateProductLine(
     productLineId: string,
@@ -198,6 +323,92 @@ export async function updateProductLine(
         productId: data.prod_id,
         name: data.prod_line_name,
         displayOrder: data.display_order
+    }
+}
+
+export async function deleteProductLine(productLineId: string): Promise<DeleteProductLineResult> {
+    const { data: productLineRow, error: productLineLookupError } = await supabase
+        .from("prod_line")
+        .select("id, prod_id")
+        .eq("id", productLineId)
+        .single()
+
+    if (productLineLookupError) {
+        console.error("deleteProductLine lookup error:", productLineLookupError)
+        throw productLineLookupError
+    }
+
+    const { data: modelRows, error: modelLookupError } = await supabase
+        .from("model")
+        .select("id")
+        .eq("prod_line_id", productLineId)
+
+    if (modelLookupError) {
+        console.error("deleteProductLine model lookup error:", modelLookupError)
+        throw modelLookupError
+    }
+
+    const modelIds = (modelRows ?? []).map((row) => row.id as string)
+
+    const [
+        productLineConfigCountResult,
+        modelConfigCountResult,
+        modelConfigOptionCountResult
+    ] = await Promise.all([
+        supabase.from("map_prod_line-config").select("config_id", { count: "exact", head: true }).eq("prod_line_id", productLineId),
+        modelIds.length > 0
+            ? supabase.from("map_model-config").select("config_id", { count: "exact", head: true }).in("model_id", modelIds)
+            : Promise.resolve({ count: 0, error: null }),
+        modelIds.length > 0
+            ? supabase.from("map_model-config_option").select("config_option_id", { count: "exact", head: true }).in("model_id", modelIds)
+            : Promise.resolve({ count: 0, error: null })
+    ])
+
+    if (productLineConfigCountResult.error) {
+        console.error("deleteProductLine product line mapping count error:", productLineConfigCountResult.error)
+        throw productLineConfigCountResult.error
+    }
+    if (modelConfigCountResult.error) {
+        console.error("deleteProductLine model mapping count error:", modelConfigCountResult.error)
+        throw modelConfigCountResult.error
+    }
+    if (modelConfigOptionCountResult.error) {
+        console.error("deleteProductLine model option mapping count error:", modelConfigOptionCountResult.error)
+        throw modelConfigOptionCountResult.error
+    }
+
+    if (modelIds.length > 0) {
+        const cleanupModelResults = await Promise.all([
+            supabase.from("map_model-config_option").delete().in("model_id", modelIds),
+            supabase.from("map_model-config").delete().in("model_id", modelIds),
+            supabase.from("model").delete().in("id", modelIds)
+        ])
+
+        const failedModelCleanup = cleanupModelResults.find((result) => result.error)
+        if (failedModelCleanup?.error) {
+            console.error("deleteProductLine model cleanup error:", failedModelCleanup.error)
+            throw failedModelCleanup.error
+        }
+    }
+
+    const cleanupResults = await Promise.all([
+        supabase.from("map_prod_line-config").delete().eq("prod_line_id", productLineId),
+        supabase.from("prod_line").delete().eq("id", productLineId)
+    ])
+
+    const failedCleanup = cleanupResults.find((result) => result.error)
+    if (failedCleanup?.error) {
+        console.error("deleteProductLine cleanup error:", failedCleanup.error)
+        throw failedCleanup.error
+    }
+
+    await reestablishProductLineDisplayOrder(productLineRow.prod_id)
+
+    return {
+        removedProductLineConfigMappingCount: productLineConfigCountResult.count ?? 0,
+        removedModelConfigMappingCount: modelConfigCountResult.count ?? 0,
+        removedModelConfigOptionMappingCount: modelConfigOptionCountResult.count ?? 0,
+        removedModelCount: modelIds.length
     }
 }
 
@@ -271,6 +482,11 @@ export type UpdateModelInput = {
     displayOrder?: number | null
 }
 
+export type DeleteModelResult = {
+    removedModelConfigMappingCount: number
+    removedModelConfigOptionMappingCount: number
+}
+
 // UPDATE MODEL
 export async function updateModel(
     modelId: string,
@@ -315,6 +531,52 @@ export async function updateModel(
         productLineId: data.prod_line_id,
         name: data.model_name,
         displayOrder: data.display_order
+    }
+}
+
+export async function deleteModel(modelId: string): Promise<DeleteModelResult> {
+    const { data: modelRow, error: modelLookupError } = await supabase
+        .from("model")
+        .select("id, prod_line_id")
+        .eq("id", modelId)
+        .single()
+
+    if (modelLookupError) {
+        console.error("deleteModel lookup error:", modelLookupError)
+        throw modelLookupError
+    }
+
+    const [modelConfigCountResult, modelConfigOptionCountResult] = await Promise.all([
+        supabase.from("map_model-config").select("config_id", { count: "exact", head: true }).eq("model_id", modelId),
+        supabase.from("map_model-config_option").select("config_option_id", { count: "exact", head: true }).eq("model_id", modelId)
+    ])
+
+    if (modelConfigCountResult.error) {
+        console.error("deleteModel model mapping count error:", modelConfigCountResult.error)
+        throw modelConfigCountResult.error
+    }
+    if (modelConfigOptionCountResult.error) {
+        console.error("deleteModel model option mapping count error:", modelConfigOptionCountResult.error)
+        throw modelConfigOptionCountResult.error
+    }
+
+    const cleanupResults = await Promise.all([
+        supabase.from("map_model-config_option").delete().eq("model_id", modelId),
+        supabase.from("map_model-config").delete().eq("model_id", modelId),
+        supabase.from("model").delete().eq("id", modelId)
+    ])
+
+    const failedCleanup = cleanupResults.find((result) => result.error)
+    if (failedCleanup?.error) {
+        console.error("deleteModel cleanup error:", failedCleanup.error)
+        throw failedCleanup.error
+    }
+
+    await reestablishModelDisplayOrder(modelRow.prod_line_id)
+
+    return {
+        removedModelConfigMappingCount: modelConfigCountResult.count ?? 0,
+        removedModelConfigOptionMappingCount: modelConfigOptionCountResult.count ?? 0
     }
 }
 

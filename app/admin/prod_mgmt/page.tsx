@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { PackageSearch } from "lucide-react"
 import { useAppShellLock } from "@/components/app-shell-lock-provider"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { MultiLevelListEditor } from "@/components/multiLevelListEditor"
@@ -9,6 +10,10 @@ import { SelectionGallery } from "@/components/selectionGallery"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { SINGLE_SELECT_CONFIG_TYPE_ID, YES_NO_CONFIG_TYPE_ID } from "@/lib/configTypeIds"
+import { emptyStateDefinitions } from "@/lib/emptyStateDefinitions"
+import { popupDefinitions } from "@/lib/popupDefinitions"
+import { uiTextDefinitions } from "@/lib/uiTextDefinitions"
 import { fetchConfigHierarchy } from "@/services/configurableHierarchyService"
 import {
     assignProductConfigAssignment,
@@ -30,6 +35,9 @@ import {
     createProduct,
     createModel,
     createProductLine,
+    deleteProduct,
+    deleteModel,
+    deleteProductLine,
     fetchProducts,
     updateProduct,
     updateModel,
@@ -47,7 +55,11 @@ type ProductMgmtParent = HierarchyEditorParent<ProductMgmtChild> & {
 }
 
 function isSingleSelectConfig(config: ConfigWithOptions) {
-    return config.configTypeName?.trim().toLowerCase() === "single select"
+    return config.configTypeId === SINGLE_SELECT_CONFIG_TYPE_ID
+}
+
+function isYesNoConfig(config: ConfigWithOptions) {
+    return config.configTypeId === YES_NO_CONFIG_TYPE_ID
 }
 
 function toEditorItems(items: ProductLineWithModels[]): ProductMgmtParent[] {
@@ -94,11 +106,15 @@ export default function ProductManagementPage() {
         open: boolean
         title: string
         message: string
+        confirmLabel: string
+        cancelLabel: string
         onConfirm: (() => Promise<void>) | null
     }>({
         open: false,
         title: "",
         message: "",
+        confirmLabel: "Remove",
+        cancelLabel: "Cancel",
         onConfirm: null
     })
     const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false)
@@ -114,7 +130,7 @@ export default function ProductManagementPage() {
                 }
             } catch (error) {
                 console.error("Failed to load products:", error)
-                setErrorMessage("Could not load products.")
+                setErrorMessage(uiTextDefinitions.productManagement.errors.loadProductsFailed)
             } finally {
                 setIsLoadingProducts(false)
             }
@@ -178,7 +194,7 @@ export default function ProductManagementPage() {
                 setAssignedConfigOptionIdsByModelId(nextAssignedConfigOptionIdsByModelId)
             } catch (error) {
                 console.error("Failed to load configurables:", error)
-                setErrorMessage("Could not load configurables.")
+                setErrorMessage(uiTextDefinitions.productManagement.errors.loadConfigurablesFailed)
             }
         }
 
@@ -200,7 +216,7 @@ export default function ProductManagementPage() {
                 setProductLines(toEditorItems(lines))
             } catch (error) {
                 console.error("Failed to load hierarchy:", error)
-                setErrorMessage("Could not load product lines and models.")
+                setErrorMessage(uiTextDefinitions.productManagement.errors.loadHierarchyFailed)
             } finally {
                 setIsLoadingHierarchy(false)
             }
@@ -266,6 +282,40 @@ export default function ProductManagementPage() {
         },
         [getConfigOptionIds]
     )
+
+    const removeModelsFromAssignmentState = useCallback((modelIds: string[]) => {
+        if (modelIds.length === 0) {
+            return
+        }
+
+        const modelIdSet = new Set(modelIds)
+
+        setAssignedConfigIdsByModelId((current) => {
+            const next = { ...current }
+            modelIdSet.forEach((modelId) => {
+                delete next[modelId]
+            })
+            return next
+        })
+
+        setAssignedConfigOptionIdsByModelId((current) => {
+            const next = { ...current }
+            modelIdSet.forEach((modelId) => {
+                delete next[modelId]
+            })
+            return next
+        })
+    }, [])
+
+    const removeProductLineFromAssignmentState = useCallback((productLineId: string, modelIds: string[]) => {
+        setAssignedConfigIdsByProductLineId((current) => {
+            const next = { ...current }
+            delete next[productLineId]
+            return next
+        })
+
+        removeModelsFromAssignmentState(modelIds)
+    }, [removeModelsFromAssignmentState])
 
     const addModelAssignmentsForConfig = useCallback(
         async (configId: string, modelIds: string[]) => {
@@ -352,7 +402,7 @@ export default function ProductManagementPage() {
     const saveProductName = async (product: Product, newName: string) => {
         const trimmedName = newName.trim()
         if (!trimmedName) {
-            throw new Error("Product name cannot be empty.")
+            throw new Error(uiTextDefinitions.productManagement.validation.productNameRequired)
         }
 
         const updated = await updateProduct(product.id, { name: trimmedName })
@@ -372,7 +422,7 @@ export default function ProductManagementPage() {
     const createNewProduct = async (newName: string) => {
         const trimmedName = newName.trim()
         if (!trimmedName) {
-            throw new Error("Product name cannot be empty.")
+            throw new Error(uiTextDefinitions.productManagement.validation.productNameRequired)
         }
 
         const created = await createProduct(trimmedName)
@@ -380,10 +430,61 @@ export default function ProductManagementPage() {
         setSelectedProductId(created.id)
     }
 
+    const requestDeleteProduct = async (product: Product) => {
+        const productLineIds = productLines.map((line) => line.id)
+        const modelIds = productLines.flatMap((line) => line.children.map((model) => model.id))
+        const dialogDefinition = popupDefinitions.productManagement.deleteProduct(product.name)
+
+        setPendingRemovalDialog({
+            open: true,
+            title: dialogDefinition.title,
+            message: dialogDefinition.message,
+            confirmLabel: dialogDefinition.confirmLabel ?? "Delete",
+            cancelLabel: dialogDefinition.cancelLabel ?? "Cancel",
+            onConfirm: async () => {
+                setErrorMessage("")
+                setIsPersistingSelectedProduct(true)
+
+                try {
+                    await deleteProduct(product.id)
+
+                    setAssignedConfigIdsByProductId((current) => {
+                        const next = { ...current }
+                        delete next[product.id]
+                        return next
+                    })
+                    setAssignedConfigIdsByProductLineId((current) => {
+                        const next = { ...current }
+                        productLineIds.forEach((productLineId) => {
+                            delete next[productLineId]
+                        })
+                        return next
+                    })
+                    removeModelsFromAssignmentState(modelIds)
+
+                    let nextSelectedProductId = selectedProductId
+                    setProducts((prev) => {
+                        const remainingProducts = prev.filter((item) => item.id !== product.id)
+                        if (selectedProductId === product.id) {
+                            nextSelectedProductId = remainingProducts[0]?.id ?? ""
+                        }
+                        return remainingProducts
+                    })
+                    if (selectedProductId === product.id) {
+                        setSelectedProductId(nextSelectedProductId)
+                        setProductLines([])
+                    }
+                } finally {
+                    setIsPersistingSelectedProduct(false)
+                }
+            }
+        })
+    }
+
     const saveProductLineName = async (line: ProductMgmtParent, newName: string) => {
         const trimmedName = newName.trim()
         if (!trimmedName) {
-            throw new Error("Product line name cannot be empty.")
+            throw new Error(uiTextDefinitions.productManagement.validation.productLineNameRequired)
         }
 
         const updated = await updateProductLine(line.id, { name: trimmedName })
@@ -408,7 +509,7 @@ export default function ProductManagementPage() {
     ) => {
         const trimmedName = newName.trim()
         if (!trimmedName) {
-            throw new Error("Model name cannot be empty.")
+            throw new Error(uiTextDefinitions.productManagement.validation.modelNameRequired)
         }
 
         const updated = await updateModel(model.id, { name: trimmedName })
@@ -438,7 +539,7 @@ export default function ProductManagementPage() {
     const createModelForLine = async (line: ProductMgmtParent, newName: string) => {
         const trimmedName = newName.trim()
         if (!trimmedName) {
-            throw new Error("Model name cannot be empty.")
+            throw new Error(uiTextDefinitions.productManagement.validation.modelNameRequired)
         }
 
         const created = await createModel(line.id, trimmedName)
@@ -473,11 +574,11 @@ export default function ProductManagementPage() {
     const createProductLineForProduct = async (newName: string) => {
         const trimmedName = newName.trim()
         if (!trimmedName) {
-            throw new Error("Product line name cannot be empty.")
+            throw new Error(uiTextDefinitions.productManagement.validation.productLineNameRequired)
         }
 
         if (!selectedProductId) {
-            throw new Error("Select a product first.")
+            throw new Error(uiTextDefinitions.productManagement.validation.productSelectionRequired)
         }
 
         const created = await createProductLine(selectedProductId, trimmedName)
@@ -506,6 +607,67 @@ export default function ProductManagementPage() {
         ])
     }
 
+    const requestDeleteModel = async (line: ProductMgmtParent, model: ProductMgmtChild) => {
+        const dialogDefinition = popupDefinitions.productManagement.deleteModel(model.name)
+        setPendingRemovalDialog({
+            open: true,
+            title: dialogDefinition.title,
+            message: dialogDefinition.message,
+            confirmLabel: dialogDefinition.confirmLabel ?? "Delete",
+            cancelLabel: dialogDefinition.cancelLabel ?? "Cancel",
+            onConfirm: async () => {
+                setErrorMessage("")
+                setPersistingProductLineIds((current) =>
+                    current.includes(line.id) ? current : [...current, line.id]
+                )
+
+                try {
+                    await deleteModel(model.id)
+                    removeModelsFromAssignmentState([model.id])
+                    setProductLines((prev) =>
+                        prev.map((item) =>
+                            item.id === line.id
+                                ? {
+                                    ...item,
+                                    children: item.children.filter((child) => child.id !== model.id)
+                                }
+                                : item
+                        )
+                    )
+                } finally {
+                    setPersistingProductLineIds((current) => current.filter((id) => id !== line.id))
+                }
+            }
+        })
+    }
+
+    const requestDeleteProductLine = async (line: ProductMgmtParent) => {
+        const modelIds = line.children.map((model) => model.id)
+        const dialogDefinition = popupDefinitions.productManagement.deleteProductLine(line.name)
+
+        setPendingRemovalDialog({
+            open: true,
+            title: dialogDefinition.title,
+            message: dialogDefinition.message,
+            confirmLabel: dialogDefinition.confirmLabel ?? "Delete",
+            cancelLabel: dialogDefinition.cancelLabel ?? "Cancel",
+            onConfirm: async () => {
+                setErrorMessage("")
+                setPersistingProductLineIds((current) =>
+                    current.includes(line.id) ? current : [...current, line.id]
+                )
+
+                try {
+                    await deleteProductLine(line.id)
+                    removeProductLineFromAssignmentState(line.id, modelIds)
+                    setProductLines((prev) => prev.filter((item) => item.id !== line.id))
+                } finally {
+                    setPersistingProductLineIds((current) => current.filter((id) => id !== line.id))
+                }
+            }
+        })
+    }
+
     const reorderProducts = async (reorderedItems: Product[]) => {
         const previous = products
         setProducts(reorderedItems)
@@ -518,7 +680,7 @@ export default function ProductManagementPage() {
             )
         } catch (error) {
             console.error("Failed to reorder products:", error)
-            setErrorMessage("Unable to save product order.")
+            setErrorMessage(uiTextDefinitions.productManagement.errors.saveProductOrderFailed)
             setProducts(previous)
         }
     }
@@ -535,7 +697,7 @@ export default function ProductManagementPage() {
             )
         } catch (error) {
             console.error("Failed to reorder product lines:", error)
-            setErrorMessage("Unable to save product line order.")
+            setErrorMessage(uiTextDefinitions.productManagement.errors.saveProductLineOrderFailed)
             setProductLines(previous)
         }
     }
@@ -564,7 +726,7 @@ export default function ProductManagementPage() {
             )
         } catch (error) {
             console.error("Failed to reorder models:", error)
-            setErrorMessage("Unable to save model order.")
+            setErrorMessage(uiTextDefinitions.productManagement.errors.saveModelOrderFailed)
             setProductLines(previous)
         }
     }
@@ -578,11 +740,14 @@ export default function ProductManagementPage() {
             if (isSelected) {
                 const childProductLineIds = productLines.map((line) => line.id)
                 const modelIds = productLines.flatMap((line) => line.children.map((model) => model.id))
+                const dialogDefinition = popupDefinitions.productManagement.removeProductConfigurable(config.name)
 
                 setPendingRemovalDialog({
                     open: true,
-                    title: "Remove Product Configurable?",
-                    message: `Removing "${config.name}" from this product will also remove it from the product lines and models under this product, along with any related configurable option assignments.`,
+                    title: dialogDefinition.title,
+                    message: dialogDefinition.message,
+                    confirmLabel: dialogDefinition.confirmLabel ?? "Remove",
+                    cancelLabel: dialogDefinition.cancelLabel ?? "Cancel",
                     onConfirm: async () => {
                         setErrorMessage("")
                         setIsPersistingSelectedProduct(true)
@@ -607,7 +772,7 @@ export default function ProductManagementPage() {
                             removeConfigOptionsFromModelAssignmentState(config.id, modelIds)
                         } catch (error) {
                             console.error("Failed to remove product-config mapping:", error)
-                            setErrorMessage("Unable to update assigned configurables for the selected product.")
+                            setErrorMessage(uiTextDefinitions.productManagement.errors.updateSelectedProductConfigurablesFailed)
                             throw error
                         } finally {
                             setIsPersistingSelectedProduct(false)
@@ -665,7 +830,7 @@ export default function ProductManagementPage() {
                 }
             } catch (error) {
                 console.error("Failed to persist product-config mapping:", error)
-                setErrorMessage("Unable to update assigned configurables for the selected product.")
+                setErrorMessage(uiTextDefinitions.productManagement.errors.updateSelectedProductConfigurablesFailed)
             } finally {
                 setIsPersistingSelectedProduct(false)
             }
@@ -684,10 +849,16 @@ export default function ProductManagementPage() {
             const modelIds = line.children.map((model) => model.id)
 
             if (isSelected) {
+                const dialogDefinition = popupDefinitions.productManagement.removeProductLineConfigurable(
+                    config.name,
+                    line.name
+                )
                 setPendingRemovalDialog({
                     open: true,
-                    title: "Remove Product Line Configurable?",
-                    message: `Removing "${config.name}" from "${line.name}" will also remove it from the models in this product line, along with any related configurable option assignments.`,
+                    title: dialogDefinition.title,
+                    message: dialogDefinition.message,
+                    confirmLabel: dialogDefinition.confirmLabel ?? "Remove",
+                    cancelLabel: dialogDefinition.cancelLabel ?? "Cancel",
                     onConfirm: async () => {
                         setErrorMessage("")
                         setPersistingProductLineIds((current) =>
@@ -704,7 +875,7 @@ export default function ProductManagementPage() {
                             removeConfigOptionsFromModelAssignmentState(config.id, modelIds)
                         } catch (error) {
                             console.error("Failed to remove product-line-config mapping:", error)
-                            setErrorMessage("Unable to update assigned configurables.")
+                            setErrorMessage(uiTextDefinitions.productManagement.errors.updateAssignedConfigurablesFailed)
                             throw error
                         } finally {
                             setPersistingProductLineIds((current) => current.filter((id) => id !== line.id))
@@ -752,7 +923,7 @@ export default function ProductManagementPage() {
                 }
             } catch (error) {
                 console.error("Failed to persist product-line-config mapping:", error)
-                setErrorMessage("Unable to update assigned configurables.")
+                setErrorMessage(uiTextDefinitions.productManagement.errors.updateAssignedConfigurablesFailed)
             } finally {
                 setPersistingProductLineIds((current) => current.filter((id) => id !== line.id))
             }
@@ -769,6 +940,8 @@ export default function ProductManagementPage() {
             open: false,
             title: "",
             message: "",
+            confirmLabel: "Remove",
+            cancelLabel: "Cancel",
             onConfirm: null
         })
     }, [isConfirmingRemoval])
@@ -786,9 +959,13 @@ export default function ProductManagementPage() {
                 open: false,
                 title: "",
                 message: "",
+                confirmLabel: "Remove",
+                cancelLabel: "Cancel",
                 onConfirm: null
             })
-        } catch {
+        } catch (error) {
+            console.error("Failed to remove product management item:", error)
+            setErrorMessage(uiTextDefinitions.productManagement.errors.deleteFailed)
             return
         } finally {
             setIsConfirmingRemoval(false)
@@ -866,7 +1043,7 @@ export default function ProductManagementPage() {
                 }
             } catch (error) {
                 console.error("Failed to persist model-config option mapping:", error)
-                setErrorMessage("Unable to update configurable options for the selected model.")
+                setErrorMessage(uiTextDefinitions.productManagement.errors.updateModelConfigOptionsFailed)
             } finally {
                 setPersistingProductLineIds((current) => current.filter((id) => id !== line.id))
             }
@@ -874,20 +1051,68 @@ export default function ProductManagementPage() {
         [assignedConfigIdsByModelId, assignedConfigOptionIdsByModelId, getConfigOptionIds]
     )
 
+    const handleAssignedModelConfigToggle = useCallback(
+        async (
+            line: ProductMgmtParent,
+            model: ProductMgmtChild,
+            config: ConfigWithOptions,
+            isSelected: boolean
+        ) => {
+            setErrorMessage("")
+            setPersistingProductLineIds((current) =>
+                current.includes(line.id) ? current : [...current, line.id]
+            )
+
+            try {
+                if (isSelected) {
+                    await deleteMapModelConfig(model.id, config.id)
+
+                    setAssignedConfigIdsByModelId((current) => ({
+                        ...current,
+                        [model.id]: (current[model.id] ?? []).filter((id) => id !== config.id)
+                    }))
+                } else {
+                    await createMapModelConfig(model.id, config.id)
+
+                    setAssignedConfigIdsByModelId((current) => {
+                        const nextConfigIds = new Set(current[model.id] ?? [])
+                        nextConfigIds.add(config.id)
+
+                        return {
+                            ...current,
+                            [model.id]: [...nextConfigIds]
+                        }
+                    })
+                }
+            } catch (error) {
+                console.error("Failed to persist model-config mapping:", error)
+                setErrorMessage(uiTextDefinitions.productManagement.errors.updateModelConfigFailed)
+            } finally {
+                setPersistingProductLineIds((current) => current.filter((id) => id !== line.id))
+            }
+        },
+        []
+    )
+
     return (
-        <div className="flex h-screen w-full flex-col gap-5 overflow-hidden p-6">
-            <div className="shrink-0">
-                <h1 className="text-2xl font-semibold tracking-tight">Product Management</h1>
-                <p className="mt-1 text-sm text-muted-foreground">
-                    Select a product, then edit product lines and nested models inline.
-                </p>
+        <div className="admin-page-shell flex h-screen w-full flex-col gap-5 overflow-hidden p-6">
+            <div className="admin-page-hero shrink-0">
+                <div className="flex items-center gap-4">
+                    <PackageSearch className="size-8 shrink-0 text-white" aria-hidden="true" />
+                    <div>
+                        <h1 className="admin-page-hero-title text-2xl font-semibold tracking-tight">Product Management</h1>
+                        <p className="admin-page-hero-subtitle text-sm">
+                            {uiTextDefinitions.productManagement.helperText.pageSubtitle}
+                        </p>
+                    </div>
+                </div>
             </div>
 
-            <div className="grid min-h-0 flex-1 gap-3 md:grid-cols-[200px_minmax(0,1fr)]">
+            <div className="grid min-h-0 flex-1 gap-3 md:grid-cols-[250px_minmax(0,1fr)]">
                 <div className="grid min-h-0 min-w-0 grid-rows-2 gap-5">
                     <div className="flex min-h-0 min-w-0 flex-col gap-2">
                         <div className="px-1">
-                            <h2 className="text-sm font-medium tracking-tight">Products</h2>
+                            <h2 className="text-base font-semibold tracking-tight text-[var(--solveonyx-blue)]">Products</h2>
                         </div>
                         <Card className="flex min-h-0 w-full flex-1 flex-col overflow-hidden py-0.5">
                             <CardContent className="min-h-0 flex-1 overflow-visible px-2 py-2">
@@ -904,13 +1129,14 @@ export default function ProductManagementPage() {
                                         getItemLabel={(product) => product.name}
                                         onSelect={(product) => setSelectedProductId(product.id)}
                                         onSave={saveProductName}
+                                        onDelete={requestDeleteProduct}
                                         onCreate={createNewProduct}
                                         onActiveStateChange={handleGalleryActiveStateChange}
                                         addButtonLabel="Add Product"
                                         reorder={{ onReorder: reorderProducts }}
                                         disabled={galleryInteractionLocked}
                                         className="h-full"
-                                        emptyMessage="No products found."
+                                        emptyMessage={emptyStateDefinitions.productManagement.noProductsFound}
                                     />
                                 )}
                             </CardContent>
@@ -919,7 +1145,7 @@ export default function ProductManagementPage() {
 
                     <div className="flex min-h-0 min-w-0 flex-col gap-2">
                         <div className="px-1">
-                            <h2 className="text-sm font-medium tracking-tight">Assigned Configurables</h2>
+                            <h2 className="text-base font-semibold tracking-tight text-[var(--solveonyx-blue)]">Assigned Configurables</h2>
                         </div>
                         <Card className="flex min-h-0 w-full flex-1 flex-col overflow-hidden py-0.5">
                             <CardContent className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
@@ -936,7 +1162,7 @@ export default function ProductManagementPage() {
                                         isPersistingSelectedProduct
                                     }
                                     pillClassName="max-w-full"
-                                    emptyMessage="No configurables found."
+                                    emptyMessage={emptyStateDefinitions.productManagement.noConfigurablesFound}
                                 />
                             </CardContent>
                         </Card>
@@ -945,7 +1171,7 @@ export default function ProductManagementPage() {
 
                 <div className="flex min-h-0 min-w-0 flex-col gap-2">
                     <div className="px-1">
-                        <h2 className="text-sm font-medium tracking-tight">Product Lines</h2>
+                        <h2 className="text-base font-semibold tracking-tight text-[var(--solveonyx-blue)]">Product Lines</h2>
                     </div>
                     <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
                         {isLoadingHierarchy ? (
@@ -958,9 +1184,11 @@ export default function ProductManagementPage() {
                             <MultiLevelListEditor
                                 items={productLines}
                                 onSaveParent={saveProductLineName}
+                                onDeleteParent={requestDeleteProductLine}
                                 onCreateParent={createProductLineForProduct}
                                 onCreateChild={createModelForLine}
                                 onSaveChild={saveModelName}
+                                onDeleteChild={requestDeleteModel}
                                 onReorderParents={reorderProductLines}
                                 onReorderChildren={reorderModelsForLine}
                                 onActiveStateChange={handleHierarchyActiveStateChange}
@@ -983,22 +1211,62 @@ export default function ProductManagementPage() {
                                             persistingProductLineIds.includes(parent.id)
                                         }
                                         pillClassName="max-w-full"
-                                        emptyMessage="No configurables assigned to this product."
+                                        emptyMessage={emptyStateDefinitions.productManagement.noConfigurablesAssignedToProduct}
                                     />
                                 )}
                                 renderChildRowSupplement={(parent, child) => {
-                                    const assignedConfigs = productAssignedConfigs.filter((config) =>
-                                        (assignedConfigIdsByProductLineId[parent.id] ?? []).includes(config.id) &&
+                                    const lineAssignedConfigs = productAssignedConfigs.filter((config) =>
+                                        (assignedConfigIdsByProductLineId[parent.id] ?? []).includes(config.id)
+                                    )
+                                    const assignedYesNoConfigs = lineAssignedConfigs.filter((config) =>
+                                        isYesNoConfig(config)
+                                    )
+                                    const assignedSingleSelectConfigs = lineAssignedConfigs.filter((config) =>
                                         isSingleSelectConfig(config)
                                     )
+                                    const hasAnyModelLevelConfigControls =
+                                        assignedYesNoConfigs.length > 0 || assignedSingleSelectConfigs.length > 0
 
-                                    if (assignedConfigs.length === 0) {
-                                        return <PillList items={[]} emptyMessage="No single-select configurables assigned to this product line." />
+                                    if (!hasAnyModelLevelConfigControls) {
+                                        return (
+                                            <PillList
+                                                items={[]}
+                                                emptyMessage={emptyStateDefinitions.productManagement.noModelLevelConfigControlsForProductLine}
+                                            />
+                                        )
                                     }
 
                                     return (
                                         <div className="space-y-3">
-                                            {assignedConfigs.map((config) => (
+                                            {assignedYesNoConfigs.length > 0 ? (
+                                                <div className="space-y-2">
+                                                    <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                                                        Yes/No Configurables
+                                                    </p>
+                                                    <PillList
+                                                        items={assignedYesNoConfigs}
+                                                        selectedIds={assignedConfigIdsByModelId[child.id] ?? []}
+                                                        getItemLabel={(config) => config.name}
+                                                        onToggle={(config, isSelected) => {
+                                                            void handleAssignedModelConfigToggle(
+                                                                parent,
+                                                                child,
+                                                                config,
+                                                                isSelected
+                                                            )
+                                                        }}
+                                                        disabled={
+                                                            activeEditorKey !== null ||
+                                                            hierarchyInteractionLocked ||
+                                                            persistingProductLineIds.includes(parent.id)
+                                                        }
+                                                        pillClassName="max-w-full"
+                                                        emptyMessage={emptyStateDefinitions.productManagement.noYesNoConfigurablesForProductLine}
+                                                    />
+                                                </div>
+                                            ) : null}
+
+                                            {assignedSingleSelectConfigs.map((config) => (
                                                 <div key={config.id} className="space-y-2">
                                                     <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
                                                         {config.name}
@@ -1022,7 +1290,7 @@ export default function ProductManagementPage() {
                                                             persistingProductLineIds.includes(parent.id)
                                                         }
                                                         pillClassName="max-w-full"
-                                                        emptyMessage="No configurable options found."
+                                                        emptyMessage={emptyStateDefinitions.productManagement.noConfigurableOptionsFound}
                                                     />
                                                 </div>
                                             ))}
@@ -1032,7 +1300,7 @@ export default function ProductManagementPage() {
                                 addParentLabel="Add Product Line"
                                 addChildLabel="Add Model"
                                 pinAddParentToBottom
-                                emptyMessage="No product lines found for this product."
+                                emptyMessage={emptyStateDefinitions.productManagement.noProductLinesForProduct}
                             />
                         )}
                     </div>
@@ -1041,7 +1309,7 @@ export default function ProductManagementPage() {
 
             {errorMessage && (
                 <Alert variant="destructive" className="shrink-0">
-                    <AlertTitle>Product management issue</AlertTitle>
+                    <AlertTitle>{uiTextDefinitions.productManagement.alerts.pageIssueTitle}</AlertTitle>
                     <AlertDescription>{errorMessage}</AlertDescription>
                 </Alert>
             )}
@@ -1050,7 +1318,8 @@ export default function ProductManagementPage() {
                 open={pendingRemovalDialog.open}
                 title={pendingRemovalDialog.title}
                 message={pendingRemovalDialog.message}
-                confirmLabel="Remove"
+                confirmLabel={pendingRemovalDialog.confirmLabel}
+                cancelLabel={pendingRemovalDialog.cancelLabel}
                 isConfirming={isConfirmingRemoval}
                 onConfirm={() => {
                     void confirmPendingRemoval()

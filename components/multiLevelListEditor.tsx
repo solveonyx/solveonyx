@@ -1,7 +1,7 @@
 "use client"
 
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ChevronDown, ChevronRight, GripVertical, Pencil, Plus, Save, X } from "lucide-react"
+import { ChevronDown, ChevronRight, GripVertical, Pencil, Plus, Save, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ListEditor } from "@/components/listEditor"
@@ -15,6 +15,8 @@ import {
     isExpansionLocked,
     isLockedByOtherEditor
 } from "@/lib/editorInteractions"
+import { emptyStateDefinitions } from "@/lib/emptyStateDefinitions"
+import { uiTextDefinitions } from "@/lib/uiTextDefinitions"
 import { cn } from "@/lib/utils"
 import { HierarchyEditorChild, HierarchyEditorParent } from "@/types"
 
@@ -24,8 +26,10 @@ type MultiLevelListEditorProps<
 > = {
     items: TParent[]
     onSaveParent?: (parent: TParent, newName: string) => Promise<void>
+    onDeleteParent?: (parent: TParent) => Promise<void>
     onCreateParent?: (newName: string) => Promise<void>
     onSaveChild?: (parent: TParent, child: TChild, newName: string) => Promise<void>
+    onDeleteChild?: (parent: TParent, child: TChild) => Promise<void>
     onCreateChild?: (parent: TParent, newName: string) => Promise<void>
     addParentLabel?: string
     addChildLabel?: string
@@ -72,15 +76,17 @@ export function MultiLevelListEditor<
 >({
     items,
     onSaveParent,
+    onDeleteParent,
     onCreateParent,
     onCreateChild,
     onSaveChild,
+    onDeleteChild,
     addParentLabel = "Add Parent",
     addChildLabel = "Add Child",
     visibleChildParentId,
     onActiveStateChange,
     interactionLocked = false,
-    emptyMessage = "No parent rows to display.",
+    emptyMessage = emptyStateDefinitions.generic.multiLevelEditorNoParents,
     onReorderParents,
     onReorderChildren,
     canExpandParent,
@@ -250,7 +256,7 @@ export function MultiLevelListEditor<
             setActiveEditorKey(null)
         } catch (error) {
             console.error("MultiLevelListEditor parent save error:", error)
-            setErrorMessage("Unable to save changes.")
+            setErrorMessage(uiTextDefinitions.generic.componentFeedback.hierarchySaveFailed)
         } finally {
             setIsSavingParent(false)
         }
@@ -261,6 +267,28 @@ export function MultiLevelListEditor<
         setParentDraftName("")
         setActiveEditorKey(null)
         setErrorMessage("")
+    }
+
+    const deleteParent = async (parent: TParent) => {
+        if (!onDeleteParent) {
+            return
+        }
+
+        setErrorMessage("")
+        setIsSavingParent(true)
+
+        try {
+            await onDeleteParent(parent)
+            setEditingParentId(null)
+            setParentDraftName("")
+            setExpandedSection((current) => (current?.parentId === parent.id ? null : current))
+            setActiveEditorKey(null)
+        } catch (error) {
+            console.error("MultiLevelListEditor parent delete error:", error)
+            setErrorMessage(uiTextDefinitions.generic.componentFeedback.hierarchyDeleteFailed)
+        } finally {
+            setIsSavingParent(false)
+        }
     }
 
     const startAddingParent = () => {
@@ -297,7 +325,7 @@ export function MultiLevelListEditor<
             setActiveEditorKey(null)
         } catch (error) {
             console.error("MultiLevelListEditor parent create error:", error)
-            setErrorMessage("Unable to add item.")
+            setErrorMessage(uiTextDefinitions.generic.componentFeedback.hierarchyCreateFailed)
         } finally {
             setIsCreatingParent(false)
         }
@@ -310,7 +338,7 @@ export function MultiLevelListEditor<
         setErrorMessage("")
     }
 
-    const canEditParent = Boolean(onSaveParent)
+    const canEditParent = Boolean(onSaveParent || onDeleteParent)
     const canAddParent = Boolean(onCreateParent)
     const hasLocalParentActiveEditor = editingParentId !== null || isAddingParent
     const expansionIsLocked = isExpansionLocked(interactionLocked, activeEditorKey)
@@ -455,12 +483,11 @@ export function MultiLevelListEditor<
                                         ? (node) => parentSortable.setItemElement(parent.id, node)
                                         : undefined
                                 }
-                                className={cn(
-                                    "rounded-lg border bg-card p-3 shadow-sm transition-[transform,box-shadow,background-color,opacity]",
-                                    !isDraggingRow && !expansionIsLocked && "hover:bg-muted/20",
-                                    isDraggingRow && "pointer-events-none relative z-20 bg-accent opacity-80 shadow-lg will-change-transform !transition-none"
-                                )}
-                            >
+                            className={cn(
+                                "rounded-lg border bg-card p-3 shadow-sm transition-[transform,box-shadow,background-color,opacity]",
+                                isDraggingRow && "pointer-events-none relative z-20 bg-accent opacity-80 shadow-lg will-change-transform !transition-none"
+                            )}
+                        >
                                 <div className="flex items-start gap-3">
                                     {Boolean(onReorderParents) && sortedParents.length > 1 ? (
                                         <Button
@@ -491,7 +518,7 @@ export function MultiLevelListEditor<
                                         <span className="self-center w-7 shrink-0" aria-hidden="true" />
                                     )}
 
-                                    <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_72px] gap-x-2 gap-y-3">
+                                    <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_112px] gap-x-2 gap-y-3">
                                         <div className="min-w-0 min-h-[44px]">
                                             <div className="flex min-h-[44px] min-w-0 items-center gap-2">
                                                 <div className="min-w-0 flex-1">
@@ -519,6 +546,19 @@ export function MultiLevelListEditor<
 
                                         {isEditing ? (
                                             <div className="flex items-center gap-2 self-center justify-self-end">
+                                                {onDeleteParent ? (
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="icon-sm"
+                                                        onClick={() => void deleteParent(parent)}
+                                                        disabled={isSavingParent}
+                                                        aria-label="Delete item"
+                                                        className={`${EDITOR_ICON_BUTTON_CLASS} ${EDITOR_ICON_BUTTON_INTERACTIVE_CLASS} text-destructive/70 hover:bg-transparent hover:text-destructive`}
+                                                    >
+                                                        <Trash2 />
+                                                    </Button>
+                                                ) : null}
                                                 <Button
                                                     type="button"
                                                     variant="ghost"
@@ -555,7 +595,7 @@ export function MultiLevelListEditor<
                                                 <Pencil />
                                             </Button>
                                         ) : (
-                                            <div className="w-[72px]" />
+                                            <div className="w-[112px]" />
                                         )}
 
                                         <div className="col-span-2 flex min-w-0 flex-col gap-1">
@@ -614,6 +654,11 @@ export function MultiLevelListEditor<
                                                                     ? (child, newValue) => onSaveChild(parent, child, newValue)
                                                                     : undefined
                                                             }
+                                                            onDelete={
+                                                                onDeleteChild
+                                                                    ? (child) => onDeleteChild(parent, child)
+                                                                    : undefined
+                                                            }
                                                             onCreate={
                                                                 onCreateChild
                                                                     ? (newValue) => onCreateChild(parent, newValue)
@@ -628,7 +673,7 @@ export function MultiLevelListEditor<
                                                                     : undefined
                                                             }
                                                             addButtonLabel={addChildLabel}
-                                                            emptyMessage="No child rows for this parent."
+                                                            emptyMessage={emptyStateDefinitions.generic.nestedEditorNoChildren}
                                                         />
                                                     </div>
                                                 ) : null}

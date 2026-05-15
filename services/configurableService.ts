@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase"
+import { SINGLE_SELECT_CONFIG_TYPE_ID } from "@/lib/configTypeIds"
 import { normalizeDisplayOrders } from "@/lib/displayOrder"
 import { Config, ConfigOption, ConfigType } from "@/types"
 
@@ -18,6 +19,18 @@ export type UpdateConfigTypeTransitionResult = {
     removedConfigOptionCount: number
     removedModelConfigOptionMappingCount: number
     clearedSingleSelectOptions: boolean
+}
+
+export type DeleteConfigResult = {
+    removedProductMappingCount: number
+    removedProductLineMappingCount: number
+    removedModelMappingCount: number
+    removedModelOptionMappingCount: number
+    removedConfigOptionCount: number
+}
+
+export type DeleteConfigOptionResult = {
+    removedModelOptionMappingCount: number
 }
 
 export type UpdateConfigOptionInput = {
@@ -233,8 +246,99 @@ export async function updateConfig(
     }
 }
 
-function isSingleSelectTypeName(configTypeName: string | null | undefined): boolean {
-    return (configTypeName ?? "").trim().toLowerCase() === "single select"
+export async function deleteConfig(configId: string): Promise<DeleteConfigResult> {
+    const { data: configRow, error: configLookupError } = await supabase
+        .from("config")
+        .select("id, config_type_id")
+        .eq("id", configId)
+        .single()
+
+    if (configLookupError) {
+        console.error("deleteConfig config lookup error:", configLookupError)
+        throw configLookupError
+    }
+
+    const [
+        productMappingsResult,
+        productLineMappingsResult,
+        modelMappingsResult,
+        configOptionsResult
+    ] = await Promise.all([
+        supabase.from("map_prod-config").select("prod_id", { count: "exact", head: true }).eq("config_id", configId),
+        supabase.from("map_prod_line-config").select("prod_line_id", { count: "exact", head: true }).eq("config_id", configId),
+        supabase.from("map_model-config").select("model_id", { count: "exact", head: true }).eq("config_id", configId),
+        supabase.from("config_option").select("id").eq("config_id", configId)
+    ])
+
+    if (productMappingsResult.error) {
+        console.error("deleteConfig product mapping count error:", productMappingsResult.error)
+        throw productMappingsResult.error
+    }
+    if (productLineMappingsResult.error) {
+        console.error("deleteConfig product line mapping count error:", productLineMappingsResult.error)
+        throw productLineMappingsResult.error
+    }
+    if (modelMappingsResult.error) {
+        console.error("deleteConfig model mapping count error:", modelMappingsResult.error)
+        throw modelMappingsResult.error
+    }
+    if (configOptionsResult.error) {
+        console.error("deleteConfig config option lookup error:", configOptionsResult.error)
+        throw configOptionsResult.error
+    }
+
+    const configOptionIds = (configOptionsResult.data ?? []).map((row) => row.id as string)
+    let removedModelOptionMappingCount = 0
+
+    if (configOptionIds.length > 0) {
+        const { count, error: optionMappingCountError } = await supabase
+            .from("map_model-config_option")
+            .select("model_id", { count: "exact", head: true })
+            .in("config_option_id", configOptionIds)
+
+        if (optionMappingCountError) {
+            console.error("deleteConfig model option mapping count error:", optionMappingCountError)
+            throw optionMappingCountError
+        }
+
+        removedModelOptionMappingCount = count ?? 0
+
+        const { error: deleteOptionMappingsError } = await supabase
+            .from("map_model-config_option")
+            .delete()
+            .in("config_option_id", configOptionIds)
+
+        if (deleteOptionMappingsError) {
+            console.error("deleteConfig option mapping delete error:", deleteOptionMappingsError)
+            throw deleteOptionMappingsError
+        }
+    }
+
+    const cleanupSteps = [
+        supabase.from("map_model-config").delete().eq("config_id", configId),
+        supabase.from("map_prod_line-config").delete().eq("config_id", configId),
+        supabase.from("map_prod-config").delete().eq("config_id", configId),
+        supabase.from("config_option").delete().eq("config_id", configId),
+        supabase.from("config").delete().eq("id", configId)
+    ]
+
+    const cleanupResults = await Promise.all(cleanupSteps)
+    const failedCleanup = cleanupResults.find((result) => result.error)
+
+    if (failedCleanup?.error) {
+        console.error("deleteConfig cleanup error:", failedCleanup.error)
+        throw failedCleanup.error
+    }
+
+    await reestablishConfigDisplayOrder(configRow.config_type_id)
+
+    return {
+        removedProductMappingCount: productMappingsResult.count ?? 0,
+        removedProductLineMappingCount: productLineMappingsResult.count ?? 0,
+        removedModelMappingCount: modelMappingsResult.count ?? 0,
+        removedModelOptionMappingCount,
+        removedConfigOptionCount: configOptionIds.length
+    }
 }
 
 export async function updateConfigTypeWithCleanup(
@@ -262,25 +366,8 @@ export async function updateConfigTypeWithCleanup(
         }
     }
 
-    const typeIds = [currentConfigRow.config_type_id, nextConfigTypeId]
-    const { data: configTypeRows, error: configTypeError } = await supabase
-        .from("config_type")
-        .select("id, config_type_name")
-        .in("id", typeIds)
-
-    if (configTypeError) {
-        console.error("updateConfigTypeWithCleanup config type lookup error:", configTypeError)
-        throw configTypeError
-    }
-
-    const configTypeNameById = new Map(
-        (configTypeRows ?? []).map((row) => [row.id, row.config_type_name as string])
-    )
-
-    const currentTypeIsSingleSelect = isSingleSelectTypeName(
-        configTypeNameById.get(currentConfigRow.config_type_id)
-    )
-    const nextTypeIsSingleSelect = isSingleSelectTypeName(configTypeNameById.get(nextConfigTypeId))
+    const currentTypeIsSingleSelect = currentConfigRow.config_type_id === SINGLE_SELECT_CONFIG_TYPE_ID
+    const nextTypeIsSingleSelect = nextConfigTypeId === SINGLE_SELECT_CONFIG_TYPE_ID
     const shouldClearSingleSelectOptions = currentTypeIsSingleSelect && !nextTypeIsSingleSelect
 
     let removedModelConfigOptionMappingCount = 0
@@ -460,6 +547,47 @@ export async function updateConfigOption(
         configId: data.config_id,
         name: data.config_option_name,
         displayOrder: data.display_order
+    }
+}
+
+export async function deleteConfigOption(configOptionId: string): Promise<DeleteConfigOptionResult> {
+    const { data: optionRow, error: optionLookupError } = await supabase
+        .from("config_option")
+        .select("id, config_id")
+        .eq("id", configOptionId)
+        .single()
+
+    if (optionLookupError) {
+        console.error("deleteConfigOption lookup error:", optionLookupError)
+        throw optionLookupError
+    }
+
+    const { count: removedModelOptionMappingCount, error: optionMappingCountError } = await supabase
+        .from("map_model-config_option")
+        .select("model_id", { count: "exact", head: true })
+        .eq("config_option_id", configOptionId)
+
+    if (optionMappingCountError) {
+        console.error("deleteConfigOption mapping count error:", optionMappingCountError)
+        throw optionMappingCountError
+    }
+
+    const cleanupResults = await Promise.all([
+        supabase.from("map_model-config_option").delete().eq("config_option_id", configOptionId),
+        supabase.from("config_option").delete().eq("id", configOptionId)
+    ])
+
+    const failedCleanup = cleanupResults.find((result) => result.error)
+
+    if (failedCleanup?.error) {
+        console.error("deleteConfigOption cleanup error:", failedCleanup.error)
+        throw failedCleanup.error
+    }
+
+    await reestablishConfigOptionDisplayOrder(optionRow.config_id)
+
+    return {
+        removedModelOptionMappingCount: removedModelOptionMappingCount ?? 0
     }
 }
 

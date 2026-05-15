@@ -1,9 +1,11 @@
 "use client"
 
 import { ReactNode, useEffect, useMemo, useRef, useState } from "react"
-import { ChevronDown, ChevronRight, GripVertical, Pencil, Plus, Save, X } from "lucide-react"
+import { ChevronDown, ChevronRight, GripVertical, Pencil, Plus, Save, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { emptyStateDefinitions } from "@/lib/emptyStateDefinitions"
+import { uiTextDefinitions } from "@/lib/uiTextDefinitions"
 import {
     EDITOR_ICON_BUTTON_CLASS,
     EDITOR_ICON_BUTTON_INTERACTIVE_CLASS,
@@ -21,6 +23,7 @@ type ListEditorProps<T extends { id: string }> = {
     sortField: keyof T
     editableField: keyof T
     onSave?: (row: T, newValue: string) => Promise<void>
+    onDelete?: (row: T) => Promise<void>
     onCreate?: (newValue: string) => Promise<void>
     interactionLocked?: boolean
     onActiveStateChange?: (isActive: boolean) => void
@@ -45,11 +48,12 @@ export function ListEditor<T extends { id: string }>({
     sortField,
     editableField,
     onSave,
+    onDelete,
     onCreate,
     interactionLocked = false,
     onActiveStateChange,
     addButtonLabel = "Add",
-    emptyMessage = "No rows to display.",
+    emptyMessage = emptyStateDefinitions.generic.listEditorNoRows,
     rowSupplementLabel = "Details",
     renderRowSupplement,
     reorder
@@ -111,7 +115,7 @@ export function ListEditor<T extends { id: string }>({
             setDraftValue("")
         } catch (error) {
             console.error("ListEditor save error:", error)
-            setErrorMessage("Unable to save changes. Please try again.")
+            setErrorMessage(uiTextDefinitions.generic.componentFeedback.listSaveFailed)
         } finally {
             setIsSaving(false)
         }
@@ -137,7 +141,7 @@ export function ListEditor<T extends { id: string }>({
             setNewDraftValue("")
         } catch (error) {
             console.error("ListEditor create error:", error)
-            setErrorMessage("Unable to add item. Please try again.")
+            setErrorMessage(uiTextDefinitions.generic.componentFeedback.listCreateFailed)
         } finally {
             setIsSaving(false)
         }
@@ -150,7 +154,7 @@ export function ListEditor<T extends { id: string }>({
     }
 
     const canAdd = Boolean(onCreate)
-    const canEdit = Boolean(onSave)
+    const canEdit = Boolean(onSave || onDelete)
     const reorderEnabled = Boolean(reorder?.onReorder)
     const hasLocalActiveEditor = editingId !== null || isAdding
     const canStartNewAction = !interactionLocked && !hasLocalActiveEditor
@@ -199,6 +203,27 @@ export function ListEditor<T extends { id: string }>({
         )
     }
 
+    const deleteRow = async (row: T) => {
+        if (!onDelete) {
+            return
+        }
+
+        setErrorMessage("")
+        setIsSaving(true)
+
+        try {
+            await onDelete(row)
+            setEditingId(null)
+            setDraftValue("")
+            setExpandedSupplementRowId((current) => (current === row.id ? null : current))
+        } catch (error) {
+            console.error("ListEditor delete error:", error)
+            setErrorMessage(uiTextDefinitions.generic.componentFeedback.listDeleteFailed)
+        } finally {
+            setIsSaving(false)
+        }
+    }
+
     return (
         <div
             className="space-y-2"
@@ -222,12 +247,11 @@ export function ListEditor<T extends { id: string }>({
                             ref={canReorder ? (node) => sortable.setItemElement(row.id, node) : undefined}
                             className={cn(
                                 "rounded-lg border bg-card px-3 py-[11px] shadow-sm transition-[transform,box-shadow,background-color,opacity]",
-                                !isDraggingRow && !rowInteractionLocked && "hover:bg-muted/30",
                                 isDraggingRow && "pointer-events-none relative z-20 bg-accent opacity-80 shadow-lg will-change-transform !transition-none"
                             )}
                         >
                             <div className="space-y-3">
-                                <div className="grid grid-cols-[minmax(0,1fr)_72px] items-center gap-3">
+                                <div className="grid grid-cols-[minmax(0,1fr)_112px] items-center gap-3">
                                     <div className={cn("min-w-0 flex-1", showReorderHandle && "flex items-center gap-3")}>
                                         {showReorderHandle && (
                                             <Button
@@ -331,7 +355,19 @@ export function ListEditor<T extends { id: string }>({
                                     </div>
 
                                     {isEditing ? (
-                                        <div className="flex w-[72px] items-center justify-end gap-2">
+                                        <div className="flex w-[112px] items-center justify-end gap-2">
+                                            {onDelete ? (
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon-sm"
+                                                    onClick={() => void deleteRow(row)}
+                                                    disabled={isSaving}
+                                                    aria-label="Delete item"
+                                                    className={`${EDITOR_ICON_BUTTON_CLASS} ${EDITOR_ICON_BUTTON_INTERACTIVE_CLASS} text-destructive/70 hover:bg-transparent hover:text-destructive`}
+                                                >
+                                                    <Trash2 />
+                                                </Button>
+                                            ) : null}
                                             <Button
                                                 variant="ghost"
                                                 size="icon-sm"
@@ -365,7 +401,7 @@ export function ListEditor<T extends { id: string }>({
                                             <Pencil />
                                         </Button>
                                     ) : (
-                                        <div className="w-[72px]" />
+                                        <div className="w-[112px]" />
                                     )}
                                 </div>
 

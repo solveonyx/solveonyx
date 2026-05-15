@@ -1,15 +1,22 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { Settings2 } from "lucide-react"
 import { useAppShellLock } from "@/components/app-shell-lock-provider"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { DualColumnMultiLevelListEditor } from "@/components/dualColumnMultiLevelListEditor"
+import { SINGLE_SELECT_CONFIG_TYPE_ID } from "@/lib/configTypeIds"
+import { emptyStateDefinitions } from "@/lib/emptyStateDefinitions"
+import { popupDefinitions } from "@/lib/popupDefinitions"
+import { uiTextDefinitions } from "@/lib/uiTextDefinitions"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
 import { fetchConfigHierarchy } from "@/services/configurableHierarchyService"
 import {
     createConfig,
     createConfigOption,
+    deleteConfig,
+    deleteConfigOption,
     fetchConfigTypes,
     updateConfig,
     updateConfigTypeWithCleanup,
@@ -27,7 +34,7 @@ type ConfigMgmtParent = HierarchyEditorParent<ConfigMgmtChild> & {
 }
 
 function isSingleSelectConfig(line: ConfigMgmtParent): boolean {
-    return line.configTypeName.trim().toLowerCase() === "single select"
+    return line.configTypeId === SINGLE_SELECT_CONFIG_TYPE_ID
 }
 
 function toEditorItems(
@@ -59,13 +66,31 @@ export default function ConfigurationManagementPage() {
     const [errorMessage, setErrorMessage] = useState("")
     const [typeChangeDialog, setTypeChangeDialog] = useState<{
         open: boolean
-        configName: string
-        nextTypeName: string
+        title: string
+        message: string
+        cancelLabel: string
     }>({
         open: false,
-        configName: "",
-        nextTypeName: ""
+        title: "",
+        message: "",
+        cancelLabel: "Cancel"
     })
+    const [pendingRemovalDialog, setPendingRemovalDialog] = useState<{
+        open: boolean
+        title: string
+        message: string
+        confirmLabel: string
+        cancelLabel: string
+        onConfirm: (() => Promise<void>) | null
+    }>({
+        open: false,
+        title: "",
+        message: "",
+        confirmLabel: "Delete",
+        cancelLabel: "Cancel",
+        onConfirm: null
+    })
+    const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false)
     const pendingTypeChangeConfirmationRef = useRef<((confirmed: boolean) => void) | null>(null)
     const { setNavigationLocked } = useAppShellLock()
 
@@ -88,7 +113,7 @@ export default function ConfigurationManagementPage() {
                 setDefaultConfigTypeId(configTypesResult[0]?.id ?? "")
             } catch (error) {
                 console.error("Failed to load configuration hierarchy:", error)
-                setErrorMessage("Could not load configurations and options.")
+                setErrorMessage(uiTextDefinitions.configurationManagement.errors.loadFailed)
             } finally {
                 setIsLoading(false)
             }
@@ -100,7 +125,7 @@ export default function ConfigurationManagementPage() {
     const saveConfigName = async (line: ConfigMgmtParent, newName: string) => {
         const trimmedName = newName.trim()
         if (!trimmedName) {
-            throw new Error("Config name cannot be empty.")
+            throw new Error(uiTextDefinitions.configurationManagement.validation.configNameRequired)
         }
 
         const updated = await updateConfig(line.id, { name: trimmedName })
@@ -121,21 +146,22 @@ export default function ConfigurationManagementPage() {
 
     const saveConfigType = async (line: ConfigMgmtParent, configTypeId: string) => {
         if (!configTypeId) {
-            throw new Error("Config type is required.")
+            throw new Error(uiTextDefinitions.configurationManagement.validation.configTypeRequired)
         }
 
         const nextTypeName =
             configTypeOptions.find((option) => option.value === configTypeId)?.label ?? line.configTypeName
-        const requiresConfirmation =
-            isSingleSelectConfig(line) && nextTypeName.trim().toLowerCase() !== "single select"
+        const requiresConfirmation = isSingleSelectConfig(line) && configTypeId !== SINGLE_SELECT_CONFIG_TYPE_ID
 
         if (requiresConfirmation) {
+            const dialogDefinition = popupDefinitions.configuration.changeConfigType(line.name, nextTypeName)
             const confirmed = await new Promise<boolean>((resolve) => {
                 pendingTypeChangeConfirmationRef.current = resolve
                 setTypeChangeDialog({
                     open: true,
-                    configName: line.name,
-                    nextTypeName
+                    title: dialogDefinition.title,
+                    message: dialogDefinition.message,
+                    cancelLabel: dialogDefinition.cancelLabel ?? "Cancel"
                 })
             })
 
@@ -168,10 +194,51 @@ export default function ConfigurationManagementPage() {
         pendingTypeChangeConfirmationRef.current = null
         setTypeChangeDialog({
             open: false,
-            configName: "",
-            nextTypeName: ""
+            title: "",
+            message: "",
+            cancelLabel: "Cancel"
         })
     }, [])
+
+    const closePendingRemovalDialog = useCallback(() => {
+        if (isConfirmingRemoval) {
+            return
+        }
+
+        setPendingRemovalDialog({
+            open: false,
+            title: "",
+            message: "",
+            confirmLabel: "Delete",
+            cancelLabel: "Cancel",
+            onConfirm: null
+        })
+    }, [isConfirmingRemoval])
+
+    const confirmPendingRemoval = useCallback(async () => {
+        if (!pendingRemovalDialog.onConfirm) {
+            return
+        }
+
+        setIsConfirmingRemoval(true)
+
+        try {
+            await pendingRemovalDialog.onConfirm()
+            setPendingRemovalDialog({
+                open: false,
+                title: "",
+                message: "",
+                confirmLabel: "Delete",
+                cancelLabel: "Cancel",
+                onConfirm: null
+            })
+        } catch (error) {
+            console.error("Failed to remove configurable item:", error)
+            setErrorMessage(uiTextDefinitions.configurationManagement.errors.deleteFailed)
+        } finally {
+            setIsConfirmingRemoval(false)
+        }
+    }, [pendingRemovalDialog])
 
     const saveConfigOptionName = async (
         line: ConfigMgmtParent,
@@ -180,7 +247,7 @@ export default function ConfigurationManagementPage() {
     ) => {
         const trimmedName = newName.trim()
         if (!trimmedName) {
-            throw new Error("Option name cannot be empty.")
+            throw new Error(uiTextDefinitions.configurationManagement.validation.optionNameRequired)
         }
 
         const updated = await updateConfigOption(model.id, { name: trimmedName })
@@ -209,12 +276,12 @@ export default function ConfigurationManagementPage() {
 
     const createOptionForConfig = async (line: ConfigMgmtParent, newName: string) => {
         if (!isSingleSelectConfig(line)) {
-            throw new Error("Options are only available for Single Select configs.")
+            throw new Error(uiTextDefinitions.configurationManagement.validation.optionsRequireSingleSelect)
         }
 
         const trimmedName = newName.trim()
         if (!trimmedName) {
-            throw new Error("Option name cannot be empty.")
+            throw new Error(uiTextDefinitions.configurationManagement.validation.optionNameRequired)
         }
 
         const created = await createConfigOption(line.id, trimmedName)
@@ -241,11 +308,11 @@ export default function ConfigurationManagementPage() {
     const createConfigItem = async (newName: string) => {
         const trimmedName = newName.trim()
         if (!trimmedName) {
-            throw new Error("Config name cannot be empty.")
+            throw new Error(uiTextDefinitions.configurationManagement.validation.configNameRequired)
         }
 
         if (!defaultConfigTypeId) {
-            throw new Error("No config type found. Create at least one config type first.")
+            throw new Error(uiTextDefinitions.configurationManagement.validation.noConfigTypeFound)
         }
 
         const created = await createConfig(defaultConfigTypeId, trimmedName)
@@ -261,6 +328,50 @@ export default function ConfigurationManagementPage() {
                 children: []
             }
         ])
+    }
+
+    const requestDeleteConfig = async (line: ConfigMgmtParent) => {
+        const dialogDefinition = popupDefinitions.configuration.deleteConfig(line.name)
+        setPendingRemovalDialog({
+            open: true,
+            title: dialogDefinition.title,
+            message: dialogDefinition.message,
+            confirmLabel: dialogDefinition.confirmLabel ?? "Delete",
+            cancelLabel: dialogDefinition.cancelLabel ?? "Cancel",
+            onConfirm: async () => {
+                setErrorMessage("")
+                await deleteConfig(line.id)
+                setConfigLines((prev) => prev.filter((item) => item.id !== line.id))
+            }
+        })
+    }
+
+    const requestDeleteConfigOption = async (
+        line: ConfigMgmtParent,
+        option: ConfigMgmtChild
+    ) => {
+        const dialogDefinition = popupDefinitions.configuration.deleteConfigOption(option.name)
+        setPendingRemovalDialog({
+            open: true,
+            title: dialogDefinition.title,
+            message: dialogDefinition.message,
+            confirmLabel: dialogDefinition.confirmLabel ?? "Delete",
+            cancelLabel: dialogDefinition.cancelLabel ?? "Cancel",
+            onConfirm: async () => {
+                setErrorMessage("")
+                await deleteConfigOption(option.id)
+                setConfigLines((prev) =>
+                    prev.map((item) =>
+                        item.id === line.id
+                            ? {
+                                ...item,
+                                children: item.children.filter((child) => child.id !== option.id)
+                            }
+                            : item
+                    )
+                )
+            }
+        })
     }
 
     const configTypeOptions = configTypes.map((configType) => ({
@@ -280,7 +391,7 @@ export default function ConfigurationManagementPage() {
             )
         } catch (error) {
             console.error("Failed to reorder configs:", error)
-            setErrorMessage("Unable to save config order.")
+            setErrorMessage(uiTextDefinitions.configurationManagement.errors.saveConfigOrderFailed)
             setConfigLines(previous)
         }
     }
@@ -309,7 +420,7 @@ export default function ConfigurationManagementPage() {
             )
         } catch (error) {
             console.error("Failed to reorder config options:", error)
-            setErrorMessage("Unable to save option order.")
+            setErrorMessage(uiTextDefinitions.configurationManagement.errors.saveOptionOrderFailed)
             setConfigLines(previous)
         }
     }
@@ -336,12 +447,17 @@ export default function ConfigurationManagementPage() {
     }, [activeEditorKey, setNavigationLocked])
 
     return (
-        <div className="flex h-screen w-full flex-col gap-5 overflow-hidden p-6">
-            <div className="shrink-0">
-                <h1 className="text-2xl font-semibold tracking-tight">Configuration Management</h1>
-                <p className="mt-1 text-sm text-muted-foreground">
-                    Edit configs and nested config options inline.
-                </p>
+        <div className="admin-page-shell flex h-screen w-full flex-col gap-5 overflow-hidden p-6">
+            <div className="admin-page-hero shrink-0">
+                <div className="flex items-center gap-4">
+                    <Settings2 className="size-8 shrink-0 text-white" aria-hidden="true" />
+                    <div>
+                        <h1 className="admin-page-hero-title text-2xl font-semibold tracking-tight">Configuration Management</h1>
+                        <p className="admin-page-hero-subtitle text-sm">
+                            {uiTextDefinitions.configurationManagement.helperText.pageSubtitle}
+                        </p>
+                    </div>
+                </div>
             </div>
 
             <div className="min-h-0 flex-1">
@@ -363,9 +479,11 @@ export default function ConfigurationManagementPage() {
                             onSave: saveConfigType
                         }}
                         onSaveParent={saveConfigName}
+                        onDeleteParent={requestDeleteConfig}
                         onCreateParent={createConfigItem}
                         onCreateChild={createOptionForConfig}
                         onSaveChild={saveConfigOptionName}
+                        onDeleteChild={requestDeleteConfigOption}
                         onReorderParents={reorderConfigs}
                         onReorderChildren={reorderOptionsForConfig}
                         canExpandParent={isSingleSelectConfig}
@@ -375,25 +493,38 @@ export default function ConfigurationManagementPage() {
                         addParentLabel="Add Configurable"
                         addChildLabel="Add Option"
                         pinAddParentToBottom
-                        emptyMessage="No configs found."
+                        emptyMessage={emptyStateDefinitions.configurationManagement.noConfigsFound}
                     />
                 )}
             </div>
 
             {errorMessage && (
                 <Alert variant="destructive" className="shrink-0">
-                    <AlertTitle>Configuration issue</AlertTitle>
+                    <AlertTitle>{uiTextDefinitions.configurationManagement.alerts.pageIssueTitle}</AlertTitle>
                     <AlertDescription>{errorMessage}</AlertDescription>
                 </Alert>
             )}
 
             <ConfirmDialog
                 open={typeChangeDialog.open}
-                title="Change Config Type?"
-                message={`Changing "${typeChangeDialog.configName}" to ${typeChangeDialog.nextTypeName} will remove all of its options and any model-option assignments tied to those options.`}
+                title={typeChangeDialog.title}
+                message={typeChangeDialog.message}
                 confirmLabel="Change Type"
+                cancelLabel={typeChangeDialog.cancelLabel}
                 onConfirm={() => closeTypeChangeDialog(true)}
                 onCancel={() => closeTypeChangeDialog(false)}
+            />
+            <ConfirmDialog
+                open={pendingRemovalDialog.open}
+                title={pendingRemovalDialog.title}
+                message={pendingRemovalDialog.message}
+                confirmLabel={pendingRemovalDialog.confirmLabel}
+                cancelLabel={pendingRemovalDialog.cancelLabel}
+                isConfirming={isConfirmingRemoval}
+                onConfirm={() => {
+                    void confirmPendingRemoval()
+                }}
+                onCancel={closePendingRemovalDialog}
             />
         </div>
     )

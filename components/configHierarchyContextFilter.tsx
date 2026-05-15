@@ -267,8 +267,6 @@ export function ConfigHierarchyContextFilter({
         }
     }, [mappedModelIdSet, modelsByProductLineId, productLinesByProductId, selectedProductId, selectedProductLineId])
 
-    const overviewTitle = "Configuration Hierarchy"
-
     const relevantModelIds = useMemo(() => {
         if (selectedModelId) {
             return new Set([selectedModelId])
@@ -365,111 +363,106 @@ export function ConfigHierarchyContextFilter({
 
     return (
         <div className="space-y-5">
-            <div>
-                <h1 className="text-2xl font-semibold tracking-tight">{overviewTitle}</h1>
-                <p className="mt-1 text-sm text-muted-foreground">
-                    Review configurables and options assigned to different products, product lines, and models.
-                </p>
-            </div>
-
-            {!hasAnyAssignments ? (
-                <Alert>
-                    <AlertTitle>No assignments yet</AlertTitle>
-                    <AlertDescription>
-                        Assign configurables from Product Management to review the hierarchy here.
-                    </AlertDescription>
-                </Alert>
-            ) : (
-                <>
-            <div className="space-y-3">
-                <div>
-                    <Select value={selectedProductId} onValueChange={handleProductChange}>
-                        <SelectTrigger className="w-full min-w-[220px] disabled:cursor-default sm:w-1/3">
-                            <SelectValue placeholder="Product" />
-                        </SelectTrigger>
-                        <SelectContent position="popper" align="start">
-                            {sortedProducts.map((product) => (
-                                <SelectItem key={product.id} value={product.id}>
-                                    {product.name}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                </div>
-
-                <div>
-                    <Select
-                        value={selectedProductLineId}
-                        onValueChange={handleProductLineChange}
-                        disabled={!selectedProductId}
-                    >
-                        <SelectTrigger className="w-full min-w-[220px] disabled:cursor-default sm:w-1/3">
-                            <SelectValue placeholder="Product Line" />
-                        </SelectTrigger>
-                        <SelectContent position="popper" align="start">
-                            {visibleProductLines.map((productLine) => (
-                                <SelectItem key={productLine.id} value={productLine.id}>
-                                    {productLine.name}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                </div>
-
-                <div>
-                    <Select
-                        value={selectedModelId}
-                        onValueChange={setSelectedModelIdState}
-                        disabled={!selectedProductLineId}
-                    >
-                        <SelectTrigger className="w-full min-w-[220px] disabled:cursor-default sm:w-1/3">
-                            <SelectValue placeholder="Model" />
-                        </SelectTrigger>
-                        <SelectContent position="popper" align="start">
-                            {visibleModels.map((model) => (
-                                <SelectItem key={model.id} value={model.id}>
-                                    {model.name}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                </div>
-            </div>
-
-            {filteredHierarchy.length === 0 ? (
-                <Alert>
-                    <AlertTitle>No configs match the current filters</AlertTitle>
-                    <AlertDescription>Adjust or clear the context filters to see more of the hierarchy.</AlertDescription>
-                </Alert>
-            ) : (
-                <Card>
-                    <CardContent className="space-y-4">
-                        {filteredHierarchy.map((config, index) => (
-                            <div key={config.id} className="space-y-2">
-                                <div className="flex flex-wrap items-center gap-2">
-                                    <div className="font-medium">{config.name}</div>
-                                    {config.configTypeName && (
-                                        <Badge variant="secondary">{config.configTypeName}</Badge>
-                                    )}
-                                </div>
-
-                                {config.options.length > 0 && (
-                                    <div className="ml-4 space-y-2 pl-4">
-                                        {config.options.map((option) => (
-                                            <div key={option.id} className="text-sm text-muted-foreground">
-                                                {option.name}
-                                            </div>
+            <div className="w-full space-y-5 xl:max-w-[36%]">
+                {!hasAnyAssignments ? (
+                    <Alert>
+                        <AlertTitle>No assignments yet</AlertTitle>
+                        <AlertDescription>
+                            Assign configurables from Product Management to review the hierarchy here.
+                        </AlertDescription>
+                    </Alert>
+                ) : (
+                    <>
+                        <div className="space-y-3">
+                            <div>
+                                <Select value={selectedProductId} onValueChange={handleProductChange}>
+                                    <SelectTrigger className="w-full min-w-[220px] disabled:cursor-default">
+                                        <SelectValue placeholder="Product" />
+                                    </SelectTrigger>
+                                    <SelectContent position="popper" align="start">
+                                        {sortedProducts.map((product) => (
+                                            <SelectItem key={product.id} value={product.id}>
+                                                {product.name}
+                                            </SelectItem>
                                         ))}
-                                    </div>
-                                )}
-                                {index < filteredHierarchy.length - 1 && <Separator />}
+                                    </SelectContent>
+                                </Select>
                             </div>
-                        ))}
-                    </CardContent>
-                </Card>
-            )}
-                </>
-            )}
+
+                            <div>
+                                <Select
+                                    value={selectedProductLineId}
+                                    onValueChange={handleProductLineChange}
+                                    disabled={!selectedProductId}
+                                >
+                                    <SelectTrigger className="w-full min-w-[220px] disabled:cursor-default">
+                                        <SelectValue placeholder="Product Line" />
+                                    </SelectTrigger>
+                                    <SelectContent position="popper" align="start">
+                                        {visibleProductLines.map((productLine) => (
+                                            <SelectItem key={productLine.id} value={productLine.id}>
+                                                {productLine.name}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div>
+                                <Select
+                                    value={selectedModelId}
+                                    onValueChange={setSelectedModelIdState}
+                                    disabled={!selectedProductLineId}
+                                >
+                                    <SelectTrigger className="w-full min-w-[220px] disabled:cursor-default">
+                                        <SelectValue placeholder="Model" />
+                                    </SelectTrigger>
+                                    <SelectContent position="popper" align="start">
+                                        {visibleModels.map((model) => (
+                                            <SelectItem key={model.id} value={model.id}>
+                                                {model.name}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
+
+                        {filteredHierarchy.length === 0 ? (
+                            <Alert>
+                                <AlertTitle>No configs match the current filters</AlertTitle>
+                                <AlertDescription>Adjust or clear the context filters to see more of the hierarchy.</AlertDescription>
+                            </Alert>
+                        ) : (
+                            <Card>
+                                <CardContent className="space-y-4">
+                                    {filteredHierarchy.map((config, index) => (
+                                        <div key={config.id} className="space-y-2">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <div className="font-medium">{config.name}</div>
+                                                {config.configTypeName && (
+                                                    <Badge variant="secondary">{config.configTypeName}</Badge>
+                                                )}
+                                            </div>
+
+                                            {config.options.length > 0 && (
+                                                <div className="ml-4 space-y-2 pl-4">
+                                                    {config.options.map((option) => (
+                                                        <div key={option.id} className="text-sm text-muted-foreground">
+                                                            {option.name}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                            {index < filteredHierarchy.length - 1 && <Separator />}
+                                        </div>
+                                    ))}
+                                </CardContent>
+                            </Card>
+                        )}
+                    </>
+                )}
+            </div>
         </div>
     )
 }
