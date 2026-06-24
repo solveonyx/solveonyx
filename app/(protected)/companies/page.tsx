@@ -1,4 +1,3 @@
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
     Table,
@@ -21,12 +20,13 @@ type CompanyRow = {
 }
 
 export default async function CompaniesPage() {
-    await getCurrentUserContext()
+    const context = await getCurrentUserContext()
 
     const supabase = await createSupabaseServerClient()
     const { data: companies, error } = await supabase
         .from("companies")
         .select("id, name, account_number, phone, email, status")
+        .eq("tenant_id", context.activeTenantId)
         .order("name", { ascending: true })
 
     if (error) {
@@ -41,7 +41,7 @@ export default async function CompaniesPage() {
                 <div>
                     <h1 className="text-3xl font-semibold tracking-tight">Companies</h1>
                     <p className="text-sm text-muted-foreground">
-                        Read-only company records available to the authenticated user.
+                        Read-only company records for tenant {context.activeTenantName ?? context.activeTenantId}.
                     </p>
                 </div>
 

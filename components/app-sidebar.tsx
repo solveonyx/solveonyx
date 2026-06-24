@@ -4,22 +4,36 @@ import { useState } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { usePathname } from "next/navigation"
+import { useActiveTenant } from "@/components/active-tenant-provider"
 import { Button } from "@/components/ui/button"
 import { LogoutButton } from "@/components/logout-button"
 import { Separator } from "@/components/ui/separator"
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue
+} from "@/components/ui/select"
 import { getAppNavSections } from "@/lib/navigation/app-nav"
 import { cn } from "@/lib/utils"
 
 type AppSidebarProps = {
-    activeTenantName: string | null
     isPlatformAdmin: boolean
 }
 
-export function AppSidebar({ activeTenantName, isPlatformAdmin }: AppSidebarProps) {
+export function AppSidebar({ isPlatformAdmin }: AppSidebarProps) {
     const sidebarTransitionClass = "duration-200 ease-out"
     const pathname = usePathname()
     const [isExpanded, setIsExpanded] = useState(false)
     const navSections = getAppNavSections(isPlatformAdmin)
+    const {
+        activeTenantId,
+        activeTenantName,
+        isPending,
+        tenantMemberships,
+        setActiveTenantId
+    } = useActiveTenant()
 
     return (
         <>
@@ -80,9 +94,27 @@ export function AppSidebar({ activeTenantName, isPlatformAdmin }: AppSidebarProp
                         <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground/80">
                             Active Tenant
                         </p>
-                        <p className="truncate text-sm font-medium text-foreground">
-                            {activeTenantName ?? "No tenant selected"}
-                        </p>
+                        <div className="mt-1 space-y-2">
+                            <p className="truncate text-sm font-medium text-foreground">
+                                {activeTenantName ?? "No tenant selected"}
+                            </p>
+                            <Select
+                                value={activeTenantId}
+                                onValueChange={setActiveTenantId}
+                                disabled={tenantMemberships.length <= 1 || isPending}
+                            >
+                                <SelectTrigger className="h-8 w-full text-left">
+                                    <SelectValue placeholder="Select a tenant" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {tenantMemberships.map((membership) => (
+                                        <SelectItem key={membership.id} value={membership.tenantId}>
+                                            {membership.tenantName ?? membership.tenantId}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
                     </div>
                     <Separator />
                 </div>

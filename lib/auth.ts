@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation"
+import { cookies } from "next/headers"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 
 type UserProfileRow = {
@@ -6,8 +7,6 @@ type UserProfileRow = {
     email: string | null
     first_name: string | null
     last_name: string | null
-    tenant_id: string | null
-    role_id: string | null
     status: string | null
 }
 
@@ -55,6 +54,8 @@ export type CurrentUserContext = {
     profile: UserProfileRow
 }
 
+export const ACTIVE_TENANT_COOKIE_NAME = "solveonyx-active-tenant"
+
 export async function getAuthenticatedUser() {
     const supabase = await createSupabaseServerClient()
     const { data, error } = await supabase.auth.getUser()
@@ -83,10 +84,11 @@ export async function requireAuthenticatedUser() {
 export async function getCurrentUserContext(): Promise<CurrentUserContext> {
     const user = await requireAuthenticatedUser()
     const supabase = await createSupabaseServerClient()
+    const cookieStore = await cookies()
 
     const { data: profileRow, error: profileError } = await supabase
         .from("user_profiles")
-        .select("id, email, first_name, last_name, tenant_id, role_id, status")
+        .select("id, email, first_name, last_name, status")
         .eq("id", user.id)
         .maybeSingle()
 
@@ -150,10 +152,13 @@ export async function getCurrentUserContext(): Promise<CurrentUserContext> {
         tenant: tenantsById.get(membership.tenant_id) ?? null
     }))
 
+    const requestedActiveTenantId = cookieStore.get(ACTIVE_TENANT_COOKIE_NAME)?.value ?? null
+
     const activeMembership =
-        tenantMemberships.length === 1
-            ? tenantMemberships[0]
-            : tenantMemberships.find((membership) => membership.isDefault) ?? null
+        tenantMemberships.find((membership) => membership.tenantId === requestedActiveTenantId) ??
+        tenantMemberships.find((membership) => membership.isDefault) ??
+        tenantMemberships[0] ??
+        null
 
     if (!activeMembership?.tenant) {
         redirect("/auth/error?reason=missing-tenant")
