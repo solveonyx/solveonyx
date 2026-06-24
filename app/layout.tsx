@@ -3,8 +3,6 @@ import "./globals.css";
 
 import { Geist, Geist_Mono } from "next/font/google";
 import { AppSidebar } from "@/components/app-sidebar";
-import { AppShellLockProvider } from "@/components/app-shell-lock-provider";
-import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 const geist = Geist({subsets:['latin'],variable:'--font-sans'});
@@ -16,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "SolveOnyx",
-  description: "SolveOnyx CPQ Platform",
+  description: "SolveOnyx platform starter",
 };
 
 export const viewport: Viewport = {
@@ -35,12 +33,8 @@ export default function RootLayout({
       className={cn(geistMono.variable, "font-sans", geist.variable)}
     >
       <body className="min-h-screen bg-background text-foreground antialiased">
-        <TooltipProvider>
-          <AppShellLockProvider>
-            <AppSidebar />
-            <main className="min-h-screen pl-[4.5rem]">{children}</main>
-          </AppShellLockProvider>
-        </TooltipProvider>
+        <AppSidebar />
+        <main className="min-h-screen pl-[4.5rem]">{children}</main>
       </body>
     </html>
   );
