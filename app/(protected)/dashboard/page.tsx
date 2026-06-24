@@ -1,0 +1,46 @@
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { getCurrentUserContext } from "@/lib/auth"
+
+export default async function DashboardPage() {
+    const context = await getCurrentUserContext()
+
+    return (
+        <div className="flex min-h-screen justify-center p-6">
+            <div className="w-full max-w-3xl space-y-6">
+                <div>
+                    <h1 className="text-3xl font-semibold tracking-tight">User Info</h1>
+                    <p className="text-sm text-muted-foreground">
+                        Authenticated user, profile, and tenant context.
+                    </p>
+                </div>
+
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Authenticated Context</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3 text-sm">
+                        <div>
+                            <span className="font-medium">User email:</span> {context.email}
+                        </div>
+                        <div>
+                            <span className="font-medium">First name:</span> {context.firstName ?? "N/A"}
+                        </div>
+                        <div>
+                            <span className="font-medium">Last name:</span> {context.lastName ?? "N/A"}
+                        </div>
+                        <div>
+                            <span className="font-medium">Tenant name:</span> {context.activeTenantName ?? "N/A"}
+                        </div>
+                        <div>
+                            <span className="font-medium">Tenant ID:</span> {context.activeTenantId}
+                        </div>
+                        <div>
+                            <span className="font-medium">Platform admin:</span> {context.isPlatformAdmin ? "Yes" : "No"}
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
+        </div>
+    )
+}

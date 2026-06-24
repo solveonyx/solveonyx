@@ -5,14 +5,21 @@ import Link from "next/link"
 import Image from "next/image"
 import { usePathname } from "next/navigation"
 import { Button } from "@/components/ui/button"
+import { LogoutButton } from "@/components/logout-button"
 import { Separator } from "@/components/ui/separator"
-import { appNavItems } from "@/lib/navigation/app-nav"
+import { getAppNavSections } from "@/lib/navigation/app-nav"
 import { cn } from "@/lib/utils"
 
-export function AppSidebar() {
+type AppSidebarProps = {
+    activeTenantName: string | null
+    isPlatformAdmin: boolean
+}
+
+export function AppSidebar({ activeTenantName, isPlatformAdmin }: AppSidebarProps) {
     const sidebarTransitionClass = "duration-200 ease-out"
     const pathname = usePathname()
     const [isExpanded, setIsExpanded] = useState(false)
+    const navSections = getAppNavSections(isPlatformAdmin)
 
     return (
         <>
@@ -64,44 +71,83 @@ export function AppSidebar() {
                             />
                         </div>
                     </Button>
+                    <div
+                        className={cn(
+                            "px-2 text-left opacity-0 transition-opacity duration-150",
+                            isExpanded && "opacity-100"
+                        )}
+                    >
+                        <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground/80">
+                            Active Tenant
+                        </p>
+                        <p className="truncate text-sm font-medium text-foreground">
+                            {activeTenantName ?? "No tenant selected"}
+                        </p>
+                    </div>
                     <Separator />
                 </div>
 
-                <nav className="space-y-1">
-                    {appNavItems.map((item) => {
-                        const Icon = item.icon
-                        const isActive =
-                            pathname === item.href ||
-                            (item.href !== "/" && pathname.startsWith(`${item.href}/`))
+                <div className="flex h-[calc(100%-4.25rem)] flex-col">
+                    <nav className="space-y-4">
+                        {navSections.map((section) => (
+                            <div key={section.label} className="space-y-1">
+                                {isExpanded ? (
+                                    <p className="px-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground/80">
+                                        {section.label}
+                                    </p>
+                                ) : null}
+                                {section.items.map((item) => {
+                                    const Icon = item.icon
+                                    const isActive =
+                                        pathname === item.href ||
+                                        (item.href !== "/" && pathname.startsWith(`${item.href}/`))
 
-                        return (
-                            <Link
-                                key={item.href}
-                                href={item.href}
+                                    return (
+                                        <Link
+                                            key={item.href}
+                                            href={item.href}
+                                            className={cn(
+                                                "flex h-10 items-center rounded-lg px-2 text-sm transition-colors",
+                                                isActive
+                                                    ? "bg-primary text-primary-foreground shadow-sm"
+                                                    : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                                            )}
+                                            title={item.label}
+                                            onClick={() => setIsExpanded(false)}
+                                        >
+                                            <span className="flex size-8 shrink-0 items-center justify-center">
+                                                <Icon className="size-4" aria-hidden="true" />
+                                            </span>
+                                            <span
+                                                className={cn(
+                                                    "ml-2 min-w-0 truncate opacity-0 transition-opacity duration-150",
+                                                    isExpanded && "opacity-100"
+                                                )}
+                                            >
+                                                {item.label}
+                                            </span>
+                                        </Link>
+                                    )
+                                })}
+                            </div>
+                        ))}
+                    </nav>
+
+                    <div className="mt-auto pt-3">
+                        <Separator />
+                        <div className="pt-3">
+                            <LogoutButton
+                                iconOnly={false}
+                                showLabel={isExpanded}
+                                onLoggedOut={() => setIsExpanded(false)}
                                 className={cn(
-                                    "flex h-10 items-center rounded-lg px-2 text-sm transition-colors",
-                                    isActive
-                                        ? "bg-primary text-primary-foreground shadow-sm"
-                                        : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                                    "flex h-10 w-full cursor-pointer items-center rounded-lg px-2 text-sm text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground active:bg-primary active:text-primary-foreground",
+                                    isExpanded ? "justify-start" : "justify-center px-0"
                                 )}
-                                title={item.label}
-                                onClick={() => setIsExpanded(false)}
-                            >
-                                <span className="flex size-8 shrink-0 items-center justify-center">
-                                    <Icon className="size-4" aria-hidden="true" />
-                                </span>
-                                <span
-                                    className={cn(
-                                        "ml-2 min-w-0 truncate opacity-0 transition-opacity duration-150",
-                                        isExpanded && "opacity-100"
-                                    )}
-                                >
-                                    {item.label}
-                                </span>
-                            </Link>
-                        )
-                    })}
-                </nav>
+                            />
+                        </div>
+                    </div>
+                </div>
             </aside>
         </>
     )
