@@ -8,6 +8,10 @@ import {
     TableRow
 } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
+import {
+    TenantUserRoleSelect,
+    type TenantUserRoleOption
+} from "@/components/tenant-user-role-select"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { getCurrentUserContext } from "@/lib/auth"
 import { hasPermission } from "@/lib/permissions"
@@ -19,6 +23,7 @@ type TenantUserRow = {
     first_name: string | null
     last_name: string | null
     status: string | null
+    role_id: string | null
     role_name: string | null
     created_at: string | null
 }
@@ -70,6 +75,7 @@ export default async function TenantUsersPage() {
     }
 
     const supabase = await createSupabaseServerClient()
+    const canEditUsers = hasPermission(context, "users.edit")
 
     const { data: tenantUsers, error: tenantUsersError } = await supabase
         .from("tenant_users")
@@ -109,6 +115,26 @@ export default async function TenantUsersPage() {
         throw new Error(profileError.message)
     }
 
+    const { data: activeRoles, error: activeRolesError } = await supabase
+        .from("roles")
+        .select("id, name")
+        .eq("is_active", true)
+        .order("name", { ascending: true })
+
+    if (activeRolesError) {
+        throw new Error(activeRolesError.message)
+    }
+
+    const roleOptions: TenantUserRoleOption[] = ((activeRoles ?? []) as Array<{
+        id: string
+        name: string | null
+    }>)
+        .filter((role): role is { id: string; name: string } => Boolean(role.name))
+        .map((role) => ({
+            id: role.id,
+            name: role.name
+        }))
+
     const { data: roles, error: roleError } = roleIds.length
         ? await supabase
               .from("roles")
@@ -147,6 +173,7 @@ export default async function TenantUsersPage() {
             first_name: profile?.first_name ?? null,
             last_name: profile?.last_name ?? null,
             status: membership.status,
+            role_id: membership.role_id,
             role_name: role?.name ?? null,
             created_at: membership.created_at
         }
@@ -197,7 +224,17 @@ export default async function TenantUsersPage() {
                                             <TableCell>{user.first_name ?? "N/A"}</TableCell>
                                             <TableCell>{user.last_name ?? "N/A"}</TableCell>
                                             <TableCell>{user.status ?? "N/A"}</TableCell>
-                                            <TableCell>{user.role_name ?? "N/A"}</TableCell>
+                                            <TableCell>
+                                                {canEditUsers ? (
+                                                    <TenantUserRoleSelect
+                                                        tenantUserId={user.id}
+                                                        currentRoleId={user.role_id}
+                                                        roles={roleOptions}
+                                                    />
+                                                ) : (
+                                                    user.role_name ?? "N/A"
+                                                )}
+                                            </TableCell>
                                             <TableCell>{formatDate(user.created_at)}</TableCell>
                                         </TableRow>
                                     ))}
