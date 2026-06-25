@@ -1,9 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { requireAuthenticatedUser } from "@/lib/auth"
 
 export default async function AppHomePage() {
-    await requireAuthenticatedUser()
-
     return (
         <div className="flex min-h-screen justify-center p-6">
             <div className="w-full max-w-3xl">

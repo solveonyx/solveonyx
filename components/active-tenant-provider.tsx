@@ -56,14 +56,13 @@ export function ActiveTenantProvider({
 }: ActiveTenantProviderProps) {
     const router = useRouter()
     const [isPending, startTransition] = useTransition()
-    const [activeTenantId, setActiveTenantIdState] = useState(initialActiveTenantId)
-    const [activeTenantName, setActiveTenantName] = useState(initialActiveTenantName)
+    const [optimisticTenantId, setOptimisticTenantId] = useState<string | null>(null)
     const hasResolvedStoredTenant = useRef(false)
-
-    useEffect(() => {
-        setActiveTenantIdState(initialActiveTenantId)
-        setActiveTenantName(initialActiveTenantName)
-    }, [initialActiveTenantId, initialActiveTenantName])
+    const optimisticMembership = optimisticTenantId
+        ? getMembershipByTenantId(tenantMemberships, optimisticTenantId)
+        : null
+    const activeTenantId = optimisticMembership?.tenantId ?? initialActiveTenantId
+    const activeTenantName = optimisticMembership?.tenantName ?? initialActiveTenantName
 
     useEffect(() => {
         if (hasResolvedStoredTenant.current) {
@@ -90,9 +89,6 @@ export function ActiveTenantProvider({
             return
         }
 
-        setActiveTenantIdState(savedMembership.tenantId)
-        setActiveTenantName(savedMembership.tenantName)
-
         void persistActiveTenantId(savedMembership.tenantId).finally(() => {
             startTransition(() => {
                 router.refresh()
@@ -113,8 +109,7 @@ export function ActiveTenantProvider({
         }
 
         window.localStorage.setItem(ACTIVE_TENANT_STORAGE_KEY, membership.tenantId)
-        setActiveTenantIdState(membership.tenantId)
-        setActiveTenantName(membership.tenantName)
+        setOptimisticTenantId(membership.tenantId)
 
         void persistActiveTenantId(membership.tenantId).finally(() => {
             startTransition(() => {

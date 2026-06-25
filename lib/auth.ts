@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation"
 import { cookies } from "next/headers"
+import { cache } from "react"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 
 type UserProfileRow = {
@@ -95,7 +96,7 @@ export async function requireAuthenticatedUser() {
     return user
 }
 
-export async function getCurrentUserContext(): Promise<CurrentUserContext> {
+export const getCurrentUserContext = cache(async (): Promise<CurrentUserContext> => {
     const user = await requireAuthenticatedUser()
     const supabase = await createSupabaseServerClient()
     const cookieStore = await cookies()
@@ -225,7 +226,7 @@ export async function getCurrentUserContext(): Promise<CurrentUserContext> {
         tenantMemberships,
         profile: profileRow as UserProfileRow
     }
-}
+})
 
 export async function getDashboardContext() {
     return getCurrentUserContext()

@@ -7,8 +7,10 @@ import {
     TableHeader,
     TableRow
 } from "@/components/ui/table"
+import { Button } from "@/components/ui/button"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { getCurrentUserContext } from "@/lib/auth"
+import { hasPermission } from "@/lib/permissions"
 
 type CompanyRow = {
     id: string
@@ -21,6 +23,7 @@ type CompanyRow = {
 
 export default async function CompaniesPage() {
     const context = await getCurrentUserContext()
+    const canCreateCompanies = hasPermission(context, "companies.create")
 
     const supabase = await createSupabaseServerClient()
     const { data: companies, error } = await supabase
@@ -38,11 +41,18 @@ export default async function CompaniesPage() {
     return (
         <div className="flex min-h-screen justify-center p-6">
             <div className="w-full max-w-5xl space-y-6">
-                <div>
-                    <h1 className="text-3xl font-semibold tracking-tight">Companies</h1>
-                    <p className="text-sm text-muted-foreground">
-                        Read-only company records for tenant {context.activeTenantName ?? context.activeTenantId}.
-                    </p>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <h1 className="text-3xl font-semibold tracking-tight">Companies</h1>
+                        <p className="text-sm text-muted-foreground">
+                            Read-only company records for tenant {context.activeTenantName ?? context.activeTenantId}.
+                        </p>
+                    </div>
+                    {canCreateCompanies ? (
+                        <Button type="button" variant="outline">
+                            Add Company
+                        </Button>
+                    ) : null}
                 </div>
 
                 <Card>

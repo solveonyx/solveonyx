@@ -7,8 +7,10 @@ import {
     TableHeader,
     TableRow
 } from "@/components/ui/table"
+import { Button } from "@/components/ui/button"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { getCurrentUserContext } from "@/lib/auth"
+import { hasPermission } from "@/lib/permissions"
 
 type TenantUserRow = {
     id: string
@@ -40,6 +42,7 @@ function formatDate(value: string | null) {
 
 export default async function TenantUsersPage() {
     const context = await getCurrentUserContext()
+    const canInviteUsers = hasPermission(context, "users.invite")
     const supabase = await createSupabaseServerClient()
 
     const { data: tenantUsers, error: tenantUsersError } = await supabase
@@ -126,11 +129,18 @@ export default async function TenantUsersPage() {
     return (
         <div className="flex min-h-screen justify-center p-6">
             <div className="w-full max-w-6xl space-y-6">
-                <div>
-                    <h1 className="text-3xl font-semibold tracking-tight">Tenant Users</h1>
-                    <p className="text-sm text-muted-foreground">
-                        Read-only users visible for tenant {context.activeTenantName ?? context.activeTenantId}.
-                    </p>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <h1 className="text-3xl font-semibold tracking-tight">Tenant Users</h1>
+                        <p className="text-sm text-muted-foreground">
+                            Read-only users visible for tenant {context.activeTenantName ?? context.activeTenantId}.
+                        </p>
+                    </div>
+                    {canInviteUsers ? (
+                        <Button type="button" variant="outline">
+                            Invite User
+                        </Button>
+                    ) : null}
                 </div>
 
                 <Card>
