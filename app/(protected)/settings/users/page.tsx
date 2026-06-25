@@ -42,7 +42,33 @@ function formatDate(value: string | null) {
 
 export default async function TenantUsersPage() {
     const context = await getCurrentUserContext()
+    const canViewUsers = hasPermission(context, "users.view")
     const canInviteUsers = hasPermission(context, "users.invite")
+
+    if (!canViewUsers) {
+        return (
+            <div className="flex min-h-screen justify-center p-6">
+                <div className="w-full max-w-3xl space-y-6">
+                    <div>
+                        <h1 className="text-3xl font-semibold tracking-tight">Users</h1>
+                        <p className="text-sm text-muted-foreground">
+                            User directory access for tenant {context.activeTenantName ?? context.activeTenantId}.
+                        </p>
+                    </div>
+
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Access denied</CardTitle>
+                        </CardHeader>
+                        <CardContent className="text-sm text-muted-foreground">
+                            You do not have permission to view users for this tenant.
+                        </CardContent>
+                    </Card>
+                </div>
+            </div>
+        )
+    }
+
     const supabase = await createSupabaseServerClient()
 
     const { data: tenantUsers, error: tenantUsersError } = await supabase
@@ -131,7 +157,7 @@ export default async function TenantUsersPage() {
             <div className="w-full max-w-6xl space-y-6">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                        <h1 className="text-3xl font-semibold tracking-tight">Tenant Users</h1>
+                        <h1 className="text-3xl font-semibold tracking-tight">Users</h1>
                         <p className="text-sm text-muted-foreground">
                             Read-only users visible for tenant {context.activeTenantName ?? context.activeTenantId}.
                         </p>

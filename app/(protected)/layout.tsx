@@ -1,6 +1,9 @@
 import { ActiveTenantProvider } from "@/components/active-tenant-provider"
+import { AppHeader } from "@/components/app-header"
 import { AppSidebar } from "@/components/app-sidebar"
+import { SidebarMain, SidebarStateProvider } from "@/components/sidebar-state-provider"
 import { getCurrentUserContext } from "@/lib/auth"
+import { hasPermission } from "@/lib/permissions"
 
 export default async function AppLayout({
   children,
@@ -8,6 +11,7 @@ export default async function AppLayout({
   children: React.ReactNode;
 }) {
   const context = await getCurrentUserContext()
+  const canViewUsers = hasPermission(context, "users.view")
 
   return (
     <ActiveTenantProvider
@@ -15,8 +19,10 @@ export default async function AppLayout({
       initialActiveTenantName={context.activeTenantName}
       tenantMemberships={context.tenantMemberships}
     >
-      <AppSidebar isPlatformAdmin={context.isPlatformAdmin} />
-      <main className="min-h-screen pl-[4.5rem]">{children}</main>
+      <SidebarStateProvider>
+        <AppSidebar isPlatformAdmin={context.isPlatformAdmin} canViewUsers={canViewUsers} />
+        <SidebarMain header={<AppHeader context={context} />}>{children}</SidebarMain>
+      </SidebarStateProvider>
     </ActiveTenantProvider>
   );
 }

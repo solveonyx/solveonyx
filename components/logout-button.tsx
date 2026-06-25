@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button"
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser"
 import { cn } from "@/lib/utils"
 
+const ACTIVE_TENANT_STORAGE_KEY = "solveonyx.activeTenantId"
+
 type LogoutButtonProps = {
     className?: string
     iconOnly?: boolean
@@ -33,6 +35,8 @@ export function LogoutButton({
                 try {
                     const supabase = createSupabaseBrowserClient()
                     await supabase.auth.signOut()
+                    window.localStorage.removeItem(ACTIVE_TENANT_STORAGE_KEY)
+                    await fetch("/api/logout", { method: "POST" }).catch(() => null)
                     onLoggedOut?.()
                     router.push("/login")
                     router.refresh()

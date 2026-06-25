@@ -1,6 +1,7 @@
 import {
     Building2,
     CircleUserRound,
+    FileText,
     Layers3,
     Home,
     Users
@@ -21,19 +22,27 @@ export type AppNavSection = {
 const primaryNavItems: AppNavItem[] = [
     { label: "Home", href: "/", icon: Home },
     { label: "Companies", href: "/companies", icon: Building2 },
-    { label: "Tenant Users", href: "/settings/users", icon: Users },
+    { label: "Users", href: "/settings/users", icon: Users },
     { label: "User Info", href: "/dashboard", icon: CircleUserRound }
 ]
 
 const platformAdminNavItems: AppNavItem[] = [
-    { label: "Tenants", href: "/platform/tenants", icon: Layers3 }
+    { label: "Tenants", href: "/platform/tenants", icon: Layers3 },
+    { label: "Documentation", href: "/platform/docs", icon: FileText }
 ]
 
-export function getAppNavSections(isPlatformAdmin: boolean): AppNavSection[] {
+export function getAppNavSections(
+    isPlatformAdmin: boolean,
+    options: { canViewUsers: boolean }
+): AppNavSection[] {
+    const workspaceItems = primaryNavItems.filter(
+        (item) => item.href !== "/settings/users" || options.canViewUsers
+    )
+
     const sections: AppNavSection[] = [
         {
             label: "Workspace",
-            items: primaryNavItems
+            items: workspaceItems
         }
     ]
 
