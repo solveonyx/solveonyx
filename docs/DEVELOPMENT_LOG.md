@@ -15,16 +15,22 @@ SolveOnyx is currently a multi-tenant SaaS foundation built with:
 - Supabase Postgres.
 - Row Level Security.
 
-Current working tenants:
+Known tenants used during development:
 
 - SolveOnyx Dev.
 - EOS AV.
+- AeroWorks Demo.
+
+AeroWorks Demo is the current demo/test tenant name. It replaced a real client name for privacy during development.
 
 Joe is currently known to be:
 
 - Platform admin.
-- Tenant Admin in SolveOnyx Dev.
-- Tenant Admin in EOS AV.
+- Tenant Admin in development tenants used for testing.
+
+`test_admin@aeroworks.demo` is used as a non-platform Tenant Admin test user.
+
+This is a fake/manual test user for role and permission testing only. It should not be used to test real email invite delivery.
 
 ## Authentication And Tenant Foundation
 
@@ -34,8 +40,9 @@ Completed:
 - `user_profiles` stores personal profile data only.
 - `tenant_users` controls tenant membership.
 - `platform_admins` controls platform admin status.
-- Tenant switching works.
 - Active tenant context loads on protected pages.
+- Platform admins can switch tenants.
+- Non-platform users do not see the tenant switcher.
 
 Important cleanup completed:
 
@@ -70,6 +77,7 @@ Current helper functions:
 - `is_platform_admin()`
 - `is_tenant_member(target_tenant_id uuid)`
 - `has_tenant_permission(target_tenant_id uuid, required_permission_key text)`
+- `update_tenant_user_role(target_tenant_id uuid, target_tenant_user_id uuid, requested_role_id uuid)`
 
 Tenant Admin currently receives all seeded permissions.
 
@@ -108,6 +116,18 @@ It displays:
 
 This is for verification only.
 
+## App Shell
+
+Completed:
+
+- Sidebar with Workspace links.
+- Platform Admin section for platform admins only.
+- Platform Documentation link.
+- Tenant switcher for platform admins only.
+- Logout at the bottom of the sidebar.
+- Pin/unpin sidebar behavior stored in browser `localStorage`.
+- Top header showing active tenant, current user, and Platform Admin badge.
+
 ## Frontend Permission Helper
 
 Completed:
@@ -121,9 +141,23 @@ It checks whether `context.activeTenantPermissions` includes a permission key.
 Current usage:
 
 - `companies.create` gates the `Add Company` placeholder.
+- `users.view` gates the Users sidebar link and `/settings/users`.
 - `users.invite` gates the `Invite User` placeholder.
+- `users.edit` gates tenant user role editing controls.
 
-These buttons are placeholders only.
+## Tenant User Role Editing
+
+Completed:
+
+- `/settings/users` loads active universal roles.
+- Users with `users.edit` see role dropdowns.
+- Users without `users.edit` see read-only role text.
+- Role changes call `/api/tenant-users/role`.
+- The API route calls `update_tenant_user_role(...)`.
+- The RPC prevents removing the last active Tenant Admin.
+- Direct broad `tenant_users` update access is intentionally avoided.
+
+This allows testing Manager, User, and Read Only permission levels without exposing platform admin status editing.
 
 ## Current Page Status
 
@@ -158,13 +192,14 @@ Not built:
 
 Built:
 
-- Tenant-scoped read-only user list.
+- Tenant-scoped user list.
+- Requires `users.view`.
 - Permission-gated `Invite User` placeholder.
+- Permission-gated role editing through RPC.
 
 Not built:
 
 - Invite user flow.
-- Edit user flow.
 - Remove user flow.
 
 ### `/platform/tenants`
@@ -177,6 +212,13 @@ Not built:
 
 - Tenant creation or setup wizard.
 - Tenant edit flow.
+
+### `/platform/docs`
+
+Built:
+
+- Platform-admin scoped internal documentation viewer.
+- Reads known Markdown files from `/docs`.
 
 ## Local Development Stabilization
 
@@ -210,10 +252,9 @@ Do not treat CPQ as live until it is explicitly reactivated.
 
 - Company CRUD.
 - User invite flow.
-- User edit/remove flow.
+- User remove flow.
 - Tenant setup wizard.
-- Permission enforcement on server actions/API routes.
-- Role management UI.
+- Role definition management UI.
 - Production deployment.
 - Billing.
 - CPQ active module.
@@ -224,5 +265,4 @@ Do not treat CPQ as live until it is explicitly reactivated.
 - Final billing provider.
 - Final role management UX.
 - Final invite email flow.
-- Whether permission checks should be centralized in server actions, route handlers, or both.
-
+- Whether automated tests should start with Playwright, Vitest, or both.

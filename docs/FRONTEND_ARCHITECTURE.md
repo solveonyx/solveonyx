@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document explains how the current Next.js frontend is organized and how it connects to authentication, tenant switching, and permissions.
+This document explains how the current Next.js frontend is organized and how it connects to authentication, tenant context, and permissions.
 
 ## Technology
 
@@ -23,6 +23,7 @@ Current pages:
 - `/companies`
 - `/settings/users`
 - `/platform/tenants`
+- `/platform/docs`
 
 ## Authentication Flow
 
@@ -76,25 +77,48 @@ Example permission array:
   "companies.view",
   "companies.create",
   "users.view",
-  "users.invite"
+  "users.invite",
+  "users.edit"
 ]
 ```
 
+## Protected Layout
+
+Protected app pages share the sidebar and top header.
+
+The sidebar contains:
+
+- Workspace links.
+- Platform Admin links for platform admins only.
+- Tenant switcher for platform admins only.
+- Pin/unpin behavior stored in `localStorage`.
+- Logout.
+
+The top header shows:
+
+- Active tenant name.
+- Current user name.
+- Current user email when it fits cleanly.
+- Platform Admin badge when applicable.
+
+The header appears on protected pages and does not appear on `/login`.
+
 ## Active Tenant Selection
 
-Tenant switching is working.
+The app determines the active tenant from the existing tenant context flow.
 
-The app determines the active tenant from the existing tenant switching flow. The active tenant controls which tenant's data the frontend asks for.
+Important current behavior:
 
-Important:
-
+- Platform admins can see the tenant dropdown and switch tenants they have access to.
+- Non-platform Tenant Admins, Managers, Users, and Read Only users do not see the tenant dropdown.
+- Non-platform users still see the active tenant name read-only in the top header.
 - Active tenant selection is not the security source of truth.
-- RLS is still responsible for enforcing access at the database level.
+- RLS and controlled RPC functions are still responsible for enforcing access.
 
 Simple flow:
 
 ```text
-User selects tenant
+Platform admin selects tenant
   -> active tenant state/cookie updates
   -> app refreshes
   -> server context reloads
@@ -115,16 +139,20 @@ context.activeTenantPermissions.includes(permissionKey)
 
 Platform admins do not receive special handling in this helper. If a platform admin should see tenant permission UI, those permissions need to be present in `activeTenantPermissions`.
 
-## Permission-Gated UI Placeholders
+## Permission-Gated UI
 
-Current permission-gated placeholders:
+Current permission-gated UI:
 
 - `/companies`
   - Shows `Add Company` only if the user has `companies.create`.
 - `/settings/users`
   - Shows `Invite User` only if the user has `users.invite`.
+  - Shows role editing controls only if the user has `users.edit`.
+- Sidebar
+  - Shows Users link only if the user has `users.view`.
+  - Shows Platform Admin section only if `isPlatformAdmin` is true.
 
-These buttons do not do anything yet. They are placeholders only.
+The `Add Company` and `Invite User` buttons are placeholders only.
 
 ## Current Page Responsibilities
 
@@ -155,9 +183,18 @@ Shows tenant-scoped users for the active tenant.
 
 Current status:
 
-- Read-only list.
+- Requires `users.view`.
+- Shows role text for users without `users.edit`.
+- Shows role dropdowns for users with `users.edit`.
+- Calls `/api/tenant-users/role` for role updates.
+- API route calls `update_tenant_user_role(...)`.
 - Permission-gated `Invite User` placeholder.
-- No invite/edit/remove flow yet.
+
+Not built:
+
+- Invite user flow.
+- Remove user flow.
+- Platform admin status editing.
 
 ### `/platform/tenants`
 
@@ -167,6 +204,17 @@ Current status:
 
 - Read-only list.
 - Intended for platform administrators.
+
+### `/platform/docs`
+
+Shows internal Markdown documentation from the local `/docs` folder.
+
+Current status:
+
+- Platform-admin only.
+- Read-only.
+- Loads a known list of documentation files server-side.
+- Displays each doc in an expandable section.
 
 ### `/login`
 
@@ -196,10 +244,9 @@ Webpack is being used for local stability because the local Turbopack dev proces
 
 - Company CRUD.
 - User invite flow.
-- User edit/remove flow.
+- User remove flow.
 - Tenant setup wizard.
-- Server action/API permission enforcement.
-- Role management UI.
+- Role definition management UI.
 - Production deployment.
 - Billing.
 - Active CPQ module.

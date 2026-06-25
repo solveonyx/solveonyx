@@ -7,14 +7,17 @@ SolveOnyx is a multi-tenant SaaS platform. A tenant is a customer workspace, com
 The current app provides the foundation for:
 
 - Logging in with Supabase Auth.
-- Switching between tenants.
+- Resolving an active tenant for protected pages.
+- Platform-admin tenant switching.
 - Viewing tenant-scoped companies.
-- Viewing tenant-scoped users.
+- Viewing tenant-scoped users when the user has `users.view`.
+- Editing tenant user roles when the user has `users.edit`.
 - Viewing platform-wide tenants as a platform administrator.
+- Viewing internal documentation as a platform administrator.
 - Loading the active tenant role and permissions into the application context.
 - Showing small permission-gated UI placeholders.
 
-The platform is still early. Several important workflows are intentionally not built yet, including company creation, user invites, role management, billing, production deployment, and the active CPQ module.
+The platform is still early. Several important workflows are intentionally not built yet, including company creation, user invites, tenant setup, billing, production deployment, and the active CPQ module.
 
 ## Current Technology
 
@@ -39,56 +42,64 @@ User logs in
 - `/login`: sign-in page.
 - `/dashboard`: authenticated dashboard with tenant auth diagnostics.
 - `/companies`: tenant-scoped read-only company list.
-- `/settings/users`: tenant-scoped read-only user list.
+- `/settings/users`: tenant-scoped user directory, protected by `users.view`.
 - `/platform/tenants`: global tenant list for platform administrators.
+- `/platform/docs`: internal documentation viewer for platform administrators.
 
 ## Current Modules
 
 ### Finished Foundation
 
 - Authentication.
-- Tenant switching.
+- Tenant resolution.
+- Platform-admin tenant switching.
 - Tenant-scoped company reads.
 - Tenant-scoped user reads.
 - Platform-admin tenant reads.
+- Platform-admin internal documentation viewer.
 - Roles and permissions database foundation.
 - Active tenant role and permissions in app context.
 - Frontend permission helper.
+- User directory access control with `users.view`.
+- Tenant user role editing through a controlled RPC.
 
 ### Partially Built
 
 - Permission-gated UI placeholders:
   - `Add Company` appears only with `companies.create`.
   - `Invite User` appears only with `users.invite`.
+- Role editing on `/settings/users`:
+  - Tenant Admin can change tenant user roles through `update_tenant_user_role()`.
+  - Manager can view users but cannot edit roles.
+  - User and Read Only cannot access the user directory.
 
-These buttons do not perform actions yet.
+The `Add Company` and `Invite User` buttons do not perform actions yet.
 
 ### Not Built Yet
 
 - Company CRUD.
 - User invite flow.
-- User edit/remove flow.
+- User remove flow.
 - Tenant setup wizard.
-- Permission enforcement on server actions or API routes.
-- Role management UI.
+- Role management UI for changing role definitions or permission mappings.
 - Production deployment.
 - Billing.
 - Active CPQ module.
 
 ## Current Tenants
 
-The currently known working tenants are:
+Known tenants used during development include:
 
 - SolveOnyx Dev.
 - EOS AV.
+- AeroWorks Demo.
 
 Joe is currently known to be:
 
 - A SolveOnyx platform administrator.
-- Tenant Admin in SolveOnyx Dev.
-- Tenant Admin in EOS AV.
+- Tenant Admin in the development tenants used for testing.
 
-This is useful for verifying platform-admin access, tenant switching, and permission-gated UI.
+`test_admin@aeroworks.demo` is used as a non-platform Tenant Admin test user for AeroWorks Demo.
 
 ## Important Product Concepts
 
@@ -109,13 +120,35 @@ auth.users user
 
 ### Platform Admin
 
-A platform admin is someone who can operate across the SolveOnyx platform. Platform admin access is separate from tenant roles.
+A platform admin is someone who can operate across the SolveOnyx platform. Platform admin access is controlled by `platform_admins`.
 
 Platform Admin is not the same thing as Tenant Admin.
 
 ### Tenant Admin
 
 Tenant Admin is a tenant role. It applies inside a specific tenant. A user can be Tenant Admin in one tenant and have a different role in another tenant.
+
+### Universal Roles And Permissions
+
+Roles are universal platform-standard tenant roles, not tenant-specific role definitions.
+
+Current universal roles:
+
+- Tenant Admin.
+- Manager.
+- User.
+- Read Only.
+
+Permissions are universal permission keys such as:
+
+- `dashboard.view`
+- `companies.view`
+- `companies.create`
+- `users.view`
+- `users.invite`
+- `users.edit`
+
+`tenant_users.role_id` assigns one of the universal roles to a user inside a specific tenant.
 
 ## Key Architecture Decisions
 
@@ -127,5 +160,6 @@ Tenant Admin is a tenant role. It applies inside a specific tenant. A user can b
 6. Roles and permissions are universal platform definitions.
 7. A user can have a different role in each tenant through `tenant_users.role_id`.
 8. Platform Admin is not the same thing as Tenant Admin.
-9. CPQ tables are parked and not part of the current active build.
+9. Tenant user role editing is handled through the `update_tenant_user_role()` RPC, not broad direct `tenant_users` updates.
+10. CPQ tables are parked and not part of the current active build.
 
