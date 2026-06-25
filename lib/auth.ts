@@ -31,6 +31,17 @@ type TenantMembershipRow = {
     is_default: boolean | null
 }
 
+type RoleRow = {
+    id: string
+    name: string | null
+}
+
+type RolePermissionRow = {
+    permissions: {
+        permission_key: string | null
+    }[] | null
+}
+
 export type TenantMembership = {
     id: string
     userId: string
@@ -50,6 +61,9 @@ export type CurrentUserContext = {
     isPlatformAdmin: boolean
     activeTenantId: string
     activeTenantName: string | null
+    activeTenantRoleId: string | null
+    activeTenantRoleName: string | null
+    activeTenantPermissions: string[]
     tenantMemberships: TenantMembership[]
     profile: UserProfileRow
 }
@@ -164,6 +178,39 @@ export async function getCurrentUserContext(): Promise<CurrentUserContext> {
         redirect("/auth/error?reason=missing-tenant")
     }
 
+    let activeTenantRole: RoleRow | null = null
+    let activeTenantPermissions: string[] = []
+
+    if (activeMembership.roleId) {
+        const { data: roleRow, error: roleError } = await supabase
+            .from("roles")
+            .select("id, name")
+            .eq("id", activeMembership.roleId)
+            .maybeSingle()
+
+        if (roleError) {
+            throw new Error(roleError.message)
+        }
+
+        activeTenantRole = roleRow as RoleRow | null
+
+        if (activeTenantRole) {
+            const { data: rolePermissionRows, error: rolePermissionError } = await supabase
+                .from("role_permissions")
+                .select("permissions(permission_key)")
+                .eq("role_id", activeTenantRole.id)
+
+            if (rolePermissionError) {
+                throw new Error(rolePermissionError.message)
+            }
+
+            activeTenantPermissions = ((rolePermissionRows ?? []) as RolePermissionRow[])
+                .flatMap((rolePermission) => rolePermission.permissions ?? [])
+                .map((permission) => permission.permission_key ?? null)
+                .filter((permissionKey): permissionKey is string => Boolean(permissionKey))
+        }
+    }
+
     return {
         userId: user.id,
         email: user.email ?? profileRow.email ?? "",
@@ -172,6 +219,9 @@ export async function getCurrentUserContext(): Promise<CurrentUserContext> {
         isPlatformAdmin: Boolean(platformAdminRow as PlatformAdminRow | null),
         activeTenantId: activeMembership.tenantId,
         activeTenantName: activeMembership.tenantName,
+        activeTenantRoleId: activeTenantRole?.id ?? null,
+        activeTenantRoleName: activeTenantRole?.name ?? null,
+        activeTenantPermissions,
         tenantMemberships,
         profile: profileRow as UserProfileRow
     }

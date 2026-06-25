@@ -1,4 +1,3 @@
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { getCurrentUserContext } from "@/lib/auth"
 
@@ -37,6 +36,42 @@ export default async function DashboardPage() {
                         </div>
                         <div>
                             <span className="font-medium">Platform admin:</span> {context.isPlatformAdmin ? "Yes" : "No"}
+                        </div>
+                    </CardContent>
+                </Card>
+
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Tenant Auth Diagnostics</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4 text-sm">
+                        <div>
+                            <span className="font-medium">Active Tenant:</span>{" "}
+                            {context.activeTenantName ?? "N/A"}
+                        </div>
+                        <div>
+                            <span className="font-medium">Active Tenant ID:</span>{" "}
+                            {context.activeTenantId}
+                        </div>
+                        <div>
+                            <span className="font-medium">Active Tenant Role:</span>{" "}
+                            {context.activeTenantRoleName ?? "N/A"}
+                        </div>
+                        <div>
+                            <span className="font-medium">Active Tenant Role ID:</span>{" "}
+                            {context.activeTenantRoleId ?? "N/A"}
+                        </div>
+                        <div className="space-y-2">
+                            <div className="font-medium">Active Tenant Permissions</div>
+                            {context.activeTenantPermissions.length > 0 ? (
+                                <ul className="list-disc space-y-1 pl-5 font-mono text-xs">
+                                    {context.activeTenantPermissions.map((permissionKey) => (
+                                        <li key={permissionKey}>{permissionKey}</li>
+                                    ))}
+                                </ul>
+                            ) : (
+                                <div className="text-muted-foreground">No permissions found</div>
+                            )}
                         </div>
                     </CardContent>
                 </Card>
